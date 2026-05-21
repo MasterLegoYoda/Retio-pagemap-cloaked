@@ -1,13 +1,15 @@
 # Copyright (C) 2025-2026 Retio AI
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Page Map CLI: validate, build, serve, benchmark, collect, convert commands.
+"""Page Map CLI: try, build, serve, setup, auth, benchmark, collect, convert commands.
 
 Usage:
-    python -m pagemap.cli validate [--url URL] [--all]
+    python -m pagemap.cli try URL [--format text|json|markdown]
     python -m pagemap.cli build [--url URL] [--snapshots] [--output DIR]
     python -m pagemap.cli serve
-    python -m pagemap.cli benchmark [--static] [--live] [--sim-live] [--sim-static] [--task ID] [--model MODEL] [--force] [--conditions CONDS]
+    python -m pagemap.cli setup {claude-code,cursor,windsurf,vscode,claude-desktop}
+    python -m pagemap.cli validate [--url URL] [--all]
+    python -m pagemap.cli benchmark [--static] [--live] [--task ID] [--model MODEL]
     python -m pagemap.cli collect [--site SITE] [--type TYPE] [--count N] [--all] [--simulator]
     python -m pagemap.cli convert [--tool TOOL] [--snapshot-dir DIR] [--force] [--pilot]
 """
@@ -438,6 +440,46 @@ def cmd_validate(args: argparse.Namespace) -> None:
         print(f"\nSaved to {save_path}")
 
 
+def cmd_try(args: argparse.Namespace) -> None:
+    """Try PageMap on a URL — zero-config demo."""
+    url = args.url
+    fmt = args.format
+    try:
+        asyncio.run(_build_live(url, fmt=fmt))
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:
+        if _is_playwright_not_installed(e):
+            print(
+                "Playwright browser not installed.\nRun:  playwright install chromium\nThen: pagemap try <URL>",
+                file=sys.stderr,
+            )
+        else:
+            from .problem_details import from_exception
+
+            problem = from_exception(e, tool_context="try")
+            print(problem.to_cli_text(), file=sys.stderr)
+        sys.exit(1)
+
+    from ._progress import print_step
+
+    print_step("")
+    print_step("Get an API key for higher limits: https://retio.ai")
+    print_step("Docs: https://github.com/Retio-ai/Retio-pagemap")
+
+
+def _is_playwright_not_installed(e: Exception) -> bool:
+    """Check if the error is due to missing Playwright browser binaries."""
+    try:
+        from playwright._impl._errors import Error as PlaywrightError
+
+        if isinstance(e, PlaywrightError):
+            return "executable doesn't exist" in str(e).lower()
+    except ImportError:
+        pass
+    return "executable doesn't exist" in str(e).lower()
+
+
 def cmd_build(args: argparse.Namespace) -> None:
     """Build Page Maps from URLs or snapshots."""
     output_path, is_file_mode = _validate_output_path(args.output)
@@ -720,6 +762,83 @@ def _build_offline(output_dir: Path) -> None:
     headers = ["Site", "Page", "Interactables", "Pruned Tok", "Total Tok", "Time"]
     print(tabulate(results, headers=headers, tablefmt="simple"))
     print(f"\nOutput: {output_dir}")
+
+
+def cmd_auth(args: argparse.Namespace) -> None:
+    """Authenticate with PageMap cloud."""
+    from .cli_auth import login, logout, status
+
+    if args.auth_command == "login":
+        login()
+    elif args.auth_command == "logout":
+        logout()
+    elif args.auth_command == "status":
+        status()
+
+
+def cmd_setup(args: argparse.Namespace) -> None:
+    """Generate MCP config for a specific platform."""
+    target = args.target
+    _setup_mcp_config(target)
+
+
+def _setup_mcp_config(target: str) -> None:
+    """Write MCP server config for the given target platform."""
+    from pathlib import Path
+
+    home = Path.home()
+
+    server_entry = {
+        "command": "uvx",
+        "args": ["retio-pagemap"],
+    }
+
+    # Platform-specific config paths and formats
+    configs: dict[str, tuple[Path, str, str]] = {
+        # (file_path, servers_key, description)
+        "claude-code": (home / ".claude" / "mcp.json", "mcpServers", "Claude Code"),
+        "cursor": (Path.cwd() / ".cursor" / "mcp.json", "mcpServers", "Cursor"),
+        "windsurf": (Path.cwd() / ".windsurf" / "mcp.json", "mcpServers", "Windsurf"),
+        "vscode": (Path.cwd() / ".vscode" / "mcp.json", "servers", "VS Code (Copilot)"),
+        "claude-desktop": (
+            (home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json")
+            if sys.platform == "darwin"
+            else (home / "AppData" / "Roaming" / "Claude" / "claude_desktop_config.json")
+            if sys.platform == "win32"
+            else (home / ".config" / "claude" / "claude_desktop_config.json"),
+            "mcpServers",
+            "Claude Desktop",
+        ),
+    }
+
+    if target not in configs:
+        print(f"Unknown target: {target}", file=sys.stderr)
+        print(f"Available: {', '.join(configs)}", file=sys.stderr)
+        sys.exit(1)
+
+    file_path, servers_key, display_name = configs[target]
+
+    # Read existing config or create new
+    existing: dict = {}
+    if file_path.exists():
+        try:
+            existing = json.loads(file_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            print(f"Error: {file_path} contains invalid JSON. Fix it manually first.", file=sys.stderr)
+            sys.exit(1)
+        except OSError as exc:
+            print(f"Error reading {file_path}: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    servers = existing.setdefault(servers_key, {})
+    if "pagemap" in servers:
+        print(f"PageMap already configured in {file_path}")
+        return
+
+    servers["pagemap"] = server_entry
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"PageMap added to {display_name}: {file_path}")
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -1331,7 +1450,68 @@ examples:
         help="Output file path (default: stdout)",
     )
 
-    commands = {"build": cmd_build, "serve": cmd_serve, "openapi": cmd_openapi}
+    # try — zero-config demo
+    _try_epilog = """\
+examples:
+  %(prog)s https://example.com                 Print PageMap to stdout
+  %(prog)s https://amazon.com --format json    Output as JSON
+  %(prog)s https://news.ycombinator.com        Works with any site
+"""
+    p_try = subparsers.add_parser(
+        "try",
+        help="Try PageMap on any URL (no config needed)",
+        epilog=_try_epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_try.add_argument("url", type=str, help="URL to analyze")
+    p_try.add_argument(
+        "--format",
+        type=str,
+        choices=["text", "json", "markdown"],
+        default="text",
+        help="Output format (default: text)",
+    )
+
+    # setup — MCP config generation
+    _setup_targets = ["claude-code", "cursor", "windsurf", "vscode", "claude-desktop"]
+    _setup_epilog = """\
+examples:
+  %(prog)s claude-code      Add to ~/.claude/mcp.json
+  %(prog)s cursor            Add to .cursor/mcp.json
+  %(prog)s vscode            Add to .vscode/mcp.json
+  %(prog)s claude-desktop    Add to Claude Desktop config
+"""
+    p_setup = subparsers.add_parser(
+        "setup",
+        help="Add PageMap MCP server to your editor/agent",
+        epilog=_setup_epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_setup.add_argument(
+        "target",
+        type=str,
+        choices=_setup_targets,
+        help="Target platform",
+    )
+
+    # auth — OAuth login/logout/status
+    p_auth = subparsers.add_parser(
+        "auth",
+        help="Authenticate with PageMap cloud (login/logout/status)",
+    )
+    auth_sub = p_auth.add_subparsers(dest="auth_command", required=True)
+    auth_sub.add_parser("login", help="Log in and save API key")
+    auth_sub.add_parser("logout", help="Remove stored credentials")
+    auth_sub.add_parser("status", help="Show current auth status")
+
+    commands = {
+        "build": cmd_build,
+        "serve": cmd_serve,
+        "openapi": cmd_openapi,
+        "try": cmd_try,
+        "setup": cmd_setup,
+        "auth": cmd_auth,
+    }
 
     # ── Credits management (S8) ─────────────────────────────────
     if _has_management_db():

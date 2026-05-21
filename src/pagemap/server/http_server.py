@@ -36,6 +36,86 @@ __all__ = [
 logger = logging.getLogger("pagemap.server")
 
 
+# ── CORS middleware ───────────────────────────────────────────────────
+
+
+class CorsMiddleware:
+    """ASGI middleware: handles OPTIONS preflight and adds CORS headers.
+
+    Must wrap outside AuthMiddleware so preflight requests (no credentials)
+    are answered before the auth layer rejects them.
+    """
+
+    def __init__(self, app, *, allowed_origins: list[str]) -> None:
+        self.app = app
+        self._allowed = set(allowed_origins)
+        self._allow_methods = "GET, POST, PATCH, DELETE, OPTIONS"
+        self._allow_headers = "Authorization, Content-Type"
+        self._max_age = "86400"
+
+    def _origin_allowed(self, origin: str) -> str | None:
+        return origin if origin in self._allowed else None
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        origin = headers.get(b"origin", b"").decode()
+        allowed = self._origin_allowed(origin)
+
+        # OPTIONS preflight — respond immediately, skip auth
+        if scope["method"] == "OPTIONS" and allowed:
+            from starlette.responses import Response
+
+            resp = Response(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": allowed,
+                    "Access-Control-Allow-Methods": self._allow_methods,
+                    "Access-Control-Allow-Headers": self._allow_headers,
+                    "Access-Control-Max-Age": self._max_age,
+                },
+            )
+            await resp(scope, receive, send)
+            return
+
+        if not allowed:
+            await self.app(scope, receive, send)
+            return
+
+        # Non-preflight: inject CORS headers into response
+        async def send_with_cors(message):
+            if message["type"] == "http.response.start":
+                raw = list(message.get("headers", []))
+                raw.append((b"access-control-allow-origin", allowed.encode()))
+                message = {**message, "headers": raw}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_cors)
+        except Exception:
+            # Unhandled exception — ASGI server would generate a bare 500
+            # without CORS headers, causing the browser to block the
+            # response entirely.  Return a proper 500 with CORS instead.
+            import logging
+
+            logging.getLogger(__name__).exception("Unhandled exception (origin=%s)", allowed)
+            from starlette.responses import JSONResponse
+
+            resp = JSONResponse(
+                {
+                    "type": "about:blank",
+                    "title": "Internal Server Error",
+                    "status": 500,
+                },
+                status_code=500,
+                headers={"Access-Control-Allow-Origin": allowed},
+            )
+            await resp(scope, receive, send)
+
+
 # ── Health check endpoints ────────────────────────────────────────────
 
 
@@ -329,6 +409,229 @@ async def _openapi_docs(request):
         return HTMLResponse("<h1>API docs unavailable</h1>", status_code=500)
 
 
+# ── Playground endpoint (public, no auth) ────────────────────────────
+
+
+# In-memory rate limiter for playground (IP → {count, window_start})
+_playground_rate: dict[str, tuple[int, float]] = {}
+_PLAYGROUND_DAILY_LIMIT = 10
+_PLAYGROUND_WINDOW = 86400.0  # 24 hours
+
+
+def _playground_rate_check(client_ip: str) -> bool:
+    """Return True if allowed, False if rate-limited."""
+    import time
+
+    now = time.monotonic()
+    entry = _playground_rate.get(client_ip)
+    if entry is None or now - entry[1] >= _PLAYGROUND_WINDOW:
+        _playground_rate[client_ip] = (1, now)
+        return True
+    count, start = entry
+    if count >= _PLAYGROUND_DAILY_LIMIT:
+        return False
+    _playground_rate[client_ip] = (count + 1, start)
+    return True
+
+
+async def _playground_handler(request):
+    """POST /playground — public one-shot PageMap demo endpoint.
+
+    Bypasses auth/credit middleware (added to _BYPASS_PATHS).
+    IP-based rate limiting: 10 requests/day per IP.
+    """
+    import asyncio
+    import time
+    import uuid
+    from urllib.parse import urlparse
+
+    from starlette.responses import JSONResponse
+
+    import pagemap.server as srv
+
+    if request.method == "OPTIONS":
+        # CorsMiddleware handles preflight; this is a fallback for
+        # deployments without CORS middleware.
+        return JSONResponse({}, status_code=204)
+
+    if request.method != "POST":
+        return JSONResponse({"error": "Method not allowed"}, status_code=405)
+
+    # Parse body
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    url = (body.get("url") or "").strip()
+    if not url:
+        return JSONResponse({"error": "url is required"}, status_code=400)
+
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return JSONResponse({"error": "Invalid URL"}, status_code=400)
+    except Exception:
+        return JSONResponse({"error": "Invalid URL"}, status_code=400)
+
+    # IP-based rate limiting
+    state = request.scope.get("state", {})
+    client_ip = state.get("client_ip") or (request.client.host if request.client else "unknown")
+
+    if not _playground_rate_check(client_ip):
+        return JSONResponse(
+            {"error": "Rate limit exceeded. Try again tomorrow or sign up for an API key."},
+            status_code=429,
+        )
+
+    # Server readiness
+    if srv._session_manager is None:
+        return JSONResponse({"error": "Server not ready"}, status_code=503)
+
+    session_id = f"pg-{uuid.uuid4().hex[:8]}"
+    try:
+        ctx = await srv._session_manager.get_context(session_id)
+        lock = srv._session_manager.get_tool_lock(session_id)
+        start = time.monotonic()
+
+        # SSRF validation
+        ssrf_error = await srv._validate_url_with_dns(url)
+        if ssrf_error:
+            return JSONResponse({"error": f"URL blocked: {ssrf_error}"}, status_code=400)
+
+        # Process the URL with 60s timeout
+        async with asyncio.timeout(60):
+            async with lock:
+                result_str = await srv._get_page_map_impl(url, detail_level="standard", ctx=ctx)
+
+        latency_ms = round((time.monotonic() - start) * 1000)
+
+        # Check for error returns from the pipeline
+        if result_str.startswith("Error:"):
+            return JSONResponse({"error": result_str}, status_code=422)
+
+        # Extract metadata from the cached PageMap object
+        page_map = ctx.cache.active
+        raw_tokens = 0
+        if page_map and page_map.metadata:
+            a4 = page_map.metadata.get("_a4_pruning_metrics")
+            if isinstance(a4, dict):
+                raw_tokens = a4.get("raw_token_count", 0)
+
+        response_data = {
+            "url": page_map.url if page_map else url,
+            "title": page_map.title if page_map else "",
+            "pageType": page_map.page_type if page_map else "unknown",
+            "agentPrompt": result_str,
+            "meta": {
+                "tokens": page_map.pruned_tokens if page_map else 0,
+                "rawTokens": raw_tokens,
+                "interactables": page_map.total_interactables if page_map else 0,
+                "latencyMs": latency_ms,
+                "cacheStatus": "miss",
+            },
+        }
+
+        return JSONResponse(response_data)
+
+    except TimeoutError:
+        return JSONResponse({"error": "Processing timed out. Try a simpler page."}, status_code=504)
+    except Exception:
+        logger.exception("Playground processing failed")
+        return JSONResponse({"error": "Processing failed. Please try again."}, status_code=500)
+    finally:
+        with suppress(Exception):
+            await srv._session_manager.remove_session(session_id)
+
+
+# ── Playground report (failure feedback) ──────────────────────────────
+
+_REPORT_DAILY_LIMIT = 5
+_report_rate: dict[str, tuple[int, float]] = {}  # ip → (count, window_start)
+
+
+def _report_rate_check(client_ip: str) -> bool:
+    """Rate check: 5 reports/day per IP."""
+    import time
+
+    now = time.time()
+    entry = _report_rate.get(client_ip)
+    if entry is None or now - entry[1] > 86400:
+        _report_rate[client_ip] = (1, now)
+        return True
+    count, start = entry
+    if count >= _REPORT_DAILY_LIMIT:
+        return False
+    _report_rate[client_ip] = (count + 1, start)
+    return True
+
+
+async def _playground_report_handler(request):
+    """POST /playground/report — report quality issue for a URL.
+
+    Input: {url, feedback: "poor_result"|"missing_data"|"wrong_data", comment?}
+    """
+    from starlette.responses import JSONResponse
+
+    import pagemap.server as srv
+
+    if request.method == "OPTIONS":
+        return JSONResponse({}, status_code=204)
+    if request.method != "POST":
+        return JSONResponse({"error": "Method not allowed"}, status_code=405)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    url = (body.get("url") or "").strip()
+    feedback = body.get("feedback", "")
+
+    if not url:
+        return JSONResponse({"error": "url is required"}, status_code=400)
+    if feedback not in ("poor_result", "missing_data", "wrong_data"):
+        return JSONResponse({"error": "Invalid feedback type"}, status_code=400)
+
+    # IP-based rate limiting
+    state = request.scope.get("state", {})
+    client_ip = state.get("client_ip") or (request.client.host if request.client else "unknown")
+
+    if not _report_rate_check(client_ip):
+        return JSONResponse(
+            {"error": "Rate limit exceeded. Try again tomorrow."},
+            status_code=429,
+        )
+
+    # Enqueue failure snapshot
+    if hasattr(srv, "_cqp_failure_capture") and srv._cqp_failure_capture is not None:
+        try:
+            from urllib.parse import urlparse
+
+            from pagemap.cqp.failure_capture import FailureSnapshot
+
+            parsed = urlparse(url)
+            domain = parsed.hostname or ""
+            installation_id = body.get("installation_id", client_ip)
+
+            srv._cqp_failure_capture.enqueue(
+                FailureSnapshot(
+                    url=url,
+                    domain=domain,
+                    trigger_signal=f"playground_{feedback}",
+                    source="playground",
+                    installation_id=installation_id,
+                )
+            )
+        except Exception:
+            logger.debug("Failed to enqueue playground report", exc_info=True)
+
+    return JSONResponse({"status": "received"})
+
+
 # ── Programmatic route registration ──────────────────────────────────
 
 
@@ -350,6 +653,8 @@ def register_health_routes(mcp_instance) -> None:
     mcp_instance.custom_route("/v1/openapi.yaml", methods=["GET"])(_openapi_yaml)
     mcp_instance.custom_route("/docs", methods=["GET"])(_openapi_docs)
     mcp_instance.custom_route("/v1/docs", methods=["GET"])(_openapi_docs)
+    mcp_instance.custom_route("/playground", methods=["POST", "OPTIONS"])(_playground_handler)
+    mcp_instance.custom_route("/playground/report", methods=["POST", "OPTIONS"])(_playground_report_handler)
 
 
 # ── HTTP server bootstrap ─────────────────────────────────────────────
@@ -360,6 +665,7 @@ async def _run_http_server(
     port: int,
     *,
     trusted_proxies: list[str] | None = None,
+    cors_origins: list[str] | None = None,
     drain_timeout: int = 30,
     enable_otel_traces: bool = False,
     telemetry_enabled: bool = False,
@@ -449,16 +755,20 @@ async def _run_http_server(
 
             starlette_app = srv.mcp.streamable_http_app()
 
+            # Disable MCP SDK DNS rebinding protection for Cloud Run / custom domains.
+            # Our own GatewayMiddleware + Auth middleware handle request validation.
+            if srv.mcp._session_manager is not None:
+                from mcp.server.transport_security import TransportSecuritySettings
+
+                srv.mcp._session_manager.security_settings = TransportSecuritySettings(
+                    enable_dns_rebinding_protection=False,
+                )
+
             # ── Middleware chain (outermost wraps first, executes first) ──
             # Wrapping order is reverse of execution: last wrap = outermost.
-            # Request flow: Gateway → RateLimit → Paddle → Auth → RestApi → Credit → SecurityHeaders → App
+            # Request flow: Gateway → SecurityHeaders → RateLimit → CORS → Auth → RestApi → Credit → App
+            # SecurityHeaders is outside CORS so it can detect ACAO and relax CORP/COEP.
             # ──────────────────────────────────────────────────────────────────────────────────
-
-            # 5. SecurityHeaders (innermost middleware, closest to app)
-            from pagemap.security_headers import SecurityHeadersMiddleware
-
-            starlette_app = SecurityHeadersMiddleware(starlette_app, require_tls=srv._require_tls)
-            logger.info("SecurityHeaders middleware enabled (require_tls=%s)", srv._require_tls)
 
             # ── Paddle config (needed by metering + webhook + REST) ──
             from pagemap.paddle.config import PaddleConfig
@@ -486,12 +796,53 @@ async def _run_http_server(
             except ImportError:
                 logger.debug("Metering module not available")
 
+            # Anonymous tier (A-1): IP-based free trial without API key
+            _enable_anonymous = os.environ.get("PAGEMAP_ENABLE_ANONYMOUS", "").strip().lower() in ("1", "true")
+            _anonymous_limiter = None
+            if _enable_anonymous:
+                from pagemap.anonymous_limiter import AnonymousLimiter
+
+                _anon_daily = int(os.environ.get("PAGEMAP_ANON_DAILY_LIMIT", "5"))
+                _anon_burst = int(os.environ.get("PAGEMAP_ANON_BURST_LIMIT", "2"))
+                _anon_redis = None
+                _anon_redis_url = os.environ.get("REDIS_URL", "")
+                if _anon_redis_url:
+                    try:
+                        import redis.asyncio as aioredis
+
+                        _anon_redis = aioredis.Redis.from_url(
+                            _anon_redis_url,
+                            max_connections=10,
+                            socket_connect_timeout=5.0,
+                            socket_timeout=2.0,
+                        )
+                    except Exception:
+                        logger.debug("Anonymous limiter Redis connection failed, using in-memory", exc_info=True)
+                _anonymous_limiter = AnonymousLimiter(
+                    daily_limit=_anon_daily,
+                    burst_limit=_anon_burst,
+                    redis_client=_anon_redis,
+                )
+                logger.info(
+                    "Anonymous limiter enabled (daily=%d, burst=%d, redis=%s)",
+                    _anon_daily,
+                    _anon_burst,
+                    _anon_redis is not None,
+                )
+
             _topup_url = os.environ.get("PAGEMAP_TOPUP_URL", "").strip()
             starlette_app = CreditMiddleware(
-                starlette_app, repository=srv._repository, usage_sync=srv._usage_sync, topup_url=_topup_url
+                starlette_app,
+                repository=srv._repository,
+                usage_sync=srv._usage_sync,
+                topup_url=_topup_url,
+                anonymous_limiter=_anonymous_limiter,
             )
             logger.info(
-                "Credit middleware enabled (metering=%s, topup_url=%s)", srv._usage_sync is not None, bool(_topup_url)
+                "Credit middleware enabled (metering=%s, topup_url=%s, anonymous=%s)",
+                srv._usage_sync is not None,
+                bool(_topup_url),
+                _anonymous_limiter is not None,
             )
 
             # 3c. WS auth + session manager setup
@@ -516,6 +867,7 @@ async def _run_http_server(
                 repository=srv._repository,
                 credit_repo=srv._repository,
                 paddle_config=srv._paddle_config,
+                creem_config=srv._creem_config,
             )
             if _ws_token_store is not None:
                 _rest_handler._ws_token_store = _ws_token_store
@@ -569,7 +921,11 @@ async def _run_http_server(
                 logger.debug("JWT auth not available (PyJWT not installed)")
 
             _auth_middleware = AuthMiddleware(
-                starlette_app, srv._repository, jwt_config=_jwt_config, jwk_client=_jwk_client
+                starlette_app,
+                srv._repository,
+                jwt_config=_jwt_config,
+                jwk_client=_jwk_client,
+                allow_anonymous=_enable_anonymous,
             )
             if _ws_token_store is not None:
                 _auth_middleware._ws_token_store = _ws_token_store
@@ -579,6 +935,17 @@ async def _run_http_server(
                 _jwt_config is not None,
                 _ws_token_store is not None,
             )
+
+            # 2.5. CORS (outside Auth so OPTIONS preflight is answered without credentials)
+            if cors_origins:
+                starlette_app = CorsMiddleware(starlette_app, allowed_origins=cors_origins)
+                logger.info("CORS middleware enabled (origins=%s)", cors_origins)
+
+            # 2.4. SecurityHeaders (outside CORS so it sees ACAO and relaxes CORP/COEP)
+            from pagemap.security_headers import SecurityHeadersMiddleware
+
+            starlette_app = SecurityHeadersMiddleware(starlette_app, require_tls=srv._require_tls)
+            logger.info("SecurityHeaders middleware enabled (require_tls=%s)", srv._require_tls)
 
             # 2c. Incident response (IncidentResponder + ActionExecutor)
             try:
@@ -878,17 +1245,37 @@ async def _run_http_server(
                     from pagemap.cqp.ab_framework import ExperimentStore, ThompsonSampler
                     from pagemap.cqp.adaptive_alpha import AdaptiveAlphaController
                     from pagemap.cqp.cold_start import ColdStartManager
+                    from pagemap.cqp.deployment_safety import DeploymentSafetyChecker
+                    from pagemap.cqp.direction_vector import DirectionVectorEngine
                     from pagemap.cqp.disagreement_detector import DisagreementDetector
+                    from pagemap.cqp.disagreement_ranker import DisagreementRanker
                     from pagemap.cqp.eqpv_registry import EQPVRegistry
+                    from pagemap.cqp.failure_capture import FailureSnapshotCapture
                     from pagemap.cqp.guardrail import GuardrailChecker
                     from pagemap.cqp.orchestrator import CQPOrchestrator
+                    from pagemap.cqp.regression_validator import RegressionValidator
                     from pagemap.cqp.rule_adjuster import RuleAdjuster
+                    from pagemap.cqp.site_validity_gate import SiteValidityGate
                     from pagemap.telemetry import _collector as _telem_collector
 
+                    _ranker = DisagreementRanker()
+                    _direction_engine = DirectionVectorEngine(emit_fn=srv._cqp_emitter)
+                    _validity_gate = SiteValidityGate()
+                    _failure_capture = FailureSnapshotCapture(
+                        storage_dir="data/failure_snapshots",
+                        repository=srv._repository,
+                    )
+                    _regression_validator = RegressionValidator(emit_fn=srv._cqp_emitter)
+                    _deployment_safety = DeploymentSafetyChecker(emit_fn=srv._cqp_emitter)
+
+                    _cold_start = ColdStartManager()
                     srv._cqp_detector = DisagreementDetector(
                         alpha_controller=AdaptiveAlphaController(),
+                        ranker=_ranker,
+                        validity_gate=_validity_gate,
+                        failure_capture=_failure_capture,
+                        cold_start=_cold_start,
                     )
-                    _cold_start = ColdStartManager()
                     _guardrail = GuardrailChecker()
                     _experiment_store = ExperimentStore()
                     _thompson = ThompsonSampler()
@@ -902,6 +1289,8 @@ async def _run_http_server(
                     srv._cqp_eqpv_registry = _eqpv_registry
                     srv._cqp_cold_start = _cold_start
                     srv._cqp_thompson = _thompson
+                    srv._cqp_validity_gate = _validity_gate  # type: ignore[attr-defined]
+                    srv._cqp_failure_capture = _failure_capture  # type: ignore[attr-defined]
 
                     # A3: Cross-site pruning transfer (env-gated)
                     _transfer_registry = None
@@ -920,13 +1309,33 @@ async def _run_http_server(
                         thompson_sampler=_thompson,
                         eqpv_registry=_eqpv_registry,
                         transfer_registry=_transfer_registry,
+                        direction_engine=_direction_engine,
+                        ranker=_ranker,
+                        validity_gate=_validity_gate,
+                        failure_capture=_failure_capture,
+                        regression_validator=_regression_validator,
+                        deployment_safety=_deployment_safety,
                         repository=srv._repository,
+                        state=srv._state,
                         emit_fn=srv._cqp_emitter,
                     )
 
                     # Initialize from DB (load persisted state)
                     await _cqp_orchestrator.initialize_all()
+
+                    # Start failure capture background consumer
+                    await _failure_capture.start()
+
                     logger.info("CQP orchestrator initialized from DB")
+
+                    # CQP periodic improvement cycle (env-gated)
+                    if os.environ.get("PAGEMAP_CQP_ENABLED") == "1":
+                        _cqp_cycle_interval = float(os.environ.get("PAGEMAP_CQP_INTERVAL_S", "3600"))
+                        _cqp_orchestrator.schedule(interval_s=_cqp_cycle_interval)
+                        logger.info(
+                            "CQP orchestrator scheduled (interval=%ds)",
+                            int(_cqp_cycle_interval),
+                        )
                 except ImportError:
                     logger.debug("CQP modules not available")
                 except Exception:
@@ -1004,11 +1413,22 @@ async def _run_http_server(
                 with suppress(asyncio.CancelledError):
                     await _degrade_task
 
-            # S11: CQP shutdown — final DB flush + emit sequences + stop periodic task
+            # S11: CQP shutdown — stop orchestrator + failure capture + final DB flush
             if _cqp_orchestrator is not None:
+                try:
+                    _cqp_orchestrator.stop()
+                    logger.info("CQP orchestrator stopped")
+                except Exception:  # nosec B110
+                    pass
                 try:
                     await _cqp_orchestrator.flush_all_to_db()
                     logger.info("CQP final DB flush completed")
+                except Exception:  # nosec B110
+                    pass
+            if hasattr(srv, "_cqp_failure_capture") and srv._cqp_failure_capture is not None:
+                try:
+                    await srv._cqp_failure_capture.stop()
+                    logger.info("CQP failure capture stopped")
                 except Exception:  # nosec B110
                     pass
             try:

@@ -77,6 +77,7 @@ def extract_cards_from_jsonld(
             image_url = _extract_jsonld_image(item)
             url = item.get("url")
             brand = _extract_jsonld_brand(item)
+            rating, review_count = _extract_jsonld_rating(item)
 
             cards.append(
                 ProductCard(
@@ -89,6 +90,8 @@ def extract_cards_from_jsonld(
                     image_url=str(image_url) if image_url else None,
                     url=str(url) if url else None,
                     position=i + 1,
+                    rating=rating,
+                    review_count=review_count,
                 )
             )
 
@@ -267,6 +270,24 @@ def _extract_jsonld_brand(item: dict[str, Any]) -> str | None:
     if isinstance(brand, dict):
         return brand.get("name")
     return None
+
+
+def _extract_jsonld_rating(item: dict[str, Any]) -> tuple[float | None, int | None]:
+    """Extract aggregateRating from JSON-LD Product. Returns (rating, review_count)."""
+    agg = item.get("aggregateRating")
+    if not isinstance(agg, dict):
+        return None, None
+    rating = None
+    review_count = None
+    raw_val = agg.get("ratingValue")
+    if raw_val is not None:
+        with suppress(ValueError, TypeError):
+            rating = round(float(raw_val), 1)
+    raw_count = agg.get("reviewCount") or agg.get("ratingCount")
+    if raw_count is not None:
+        with suppress(ValueError, TypeError):
+            review_count = int(raw_count)
+    return rating, review_count
 
 
 # ── Shared pagination utilities ───────────────────────────────────

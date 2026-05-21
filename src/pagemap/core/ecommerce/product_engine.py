@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 from ..i18n import AVAILABILITY_TERMS, OPTION_TERMS, SHIPPING_TERMS
 from ..preprocessing.normalize import infer_currency, normalize_numeric, normalize_price
 from ..sanitizer import sanitize_text
-from . import OptionGroup, ProductResult
+from . import OptionGroup, ProductResult, TargetProduct
 from ._card_extractor import _JSONLD_RE
 
 logger = logging.getLogger(__name__)
@@ -251,6 +251,7 @@ def analyze_product(
     interactables: list[Interactable],
     metadata: dict[str, Any],
     page_url: str,
+    target_product: TargetProduct | None = None,
 ) -> ProductResult:
     """Analyze a product_detail page. Never raises."""
     try:
@@ -372,6 +373,22 @@ def analyze_product(
         # Review snippets
         review_snippets = _extract_review_snippets(jsonld)
 
+        # Target product match confidence
+        match_confidence = None
+        if target_product is not None and name:
+            from ._target_matcher import compute_match_confidence
+
+            match_confidence = compute_match_confidence(name, target_product, product_brand=brand)
+
+        # Flag fields that could not be extracted
+        gaps: list[str] = []
+        if price is None:
+            gaps.append("price")
+        if rating is None:
+            gaps.append("rating")
+        if availability is None:
+            gaps.append("availability")
+
         return ProductResult(
             name=name,
             price=price,
@@ -388,6 +405,8 @@ def analyze_product(
             gallery_images=gallery_images,
             selected_variant=selected_variant,
             review_snippets=review_snippets,
+            match_confidence=match_confidence,
+            extraction_gaps=tuple(gaps),
         )
 
     except Exception as e:

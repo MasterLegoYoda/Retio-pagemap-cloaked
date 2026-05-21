@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 from ..i18n import SORT_TERMS, SPONSORED_TERMS
 from ..sanitizer import sanitize_text
-from . import ProductCard, SearchResult
+from . import ProductCard, SearchResult, TargetProduct
 from ._card_extractor import extract_cards, find_filter_refs, find_pagination_refs
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,7 @@ def analyze_search_results(
     metadata: dict[str, Any],
     page_url: str,
     navigation_hints: dict[str, Any],
+    target_product: TargetProduct | None = None,
 ) -> SearchResult:
     """Analyze a search_results page. Never raises."""
     try:
@@ -135,6 +136,13 @@ def analyze_search_results(
         # Pagination refs
         pag = find_pagination_refs(interactables)
 
+        # Target product matching
+        target_match = None
+        if target_product is not None and cards:
+            from ._target_matcher import find_target_match
+
+            target_match = find_target_match(cards, target_product)
+
         return SearchResult(
             cards=cards,
             query=query,
@@ -147,6 +155,7 @@ def analyze_search_results(
             load_more_ref=pag.load_more_ref,
             current_page=pag.current_page,
             total_pages=pag.total_pages,
+            target_match=target_match,
         )
 
     except Exception as e:

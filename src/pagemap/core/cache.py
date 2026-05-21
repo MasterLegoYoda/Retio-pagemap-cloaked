@@ -149,6 +149,7 @@ class PageMapCache:
         self._active: CacheEntry | None = None
         self._url_lru: OrderedDict[str, CacheEntry] = OrderedDict()
         self._stats = CacheStats()
+        self.last_tier: str = "C"
 
     # -- Layer 1: Active cache --
 
@@ -285,15 +286,19 @@ class PageMapCache:
 
     def record_hit(self) -> None:
         self._stats.hits += 1
+        self.last_tier = "A"
 
     def record_miss(self) -> None:
         self._stats.misses += 1
+        self.last_tier = "C"
 
     def record_content_refresh(self) -> None:
         self._stats.content_refreshes += 1
+        self.last_tier = "B"
 
     def record_fingerprint_mismatch(self) -> None:
         self._stats.fingerprint_mismatches += 1
+        self.last_tier = "C"
 
     # -- Introspection --
 

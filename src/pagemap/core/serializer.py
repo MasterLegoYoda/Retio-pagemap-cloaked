@@ -104,6 +104,42 @@ def _page_state_json(page_map: PageMap) -> dict[str, Any]:
     return {}
 
 
+def _render_target_match_line(tm: dict[str, Any], cards: tuple | list) -> str | None:
+    """Render a >>> Target: line from target_match dict. Returns None if no match."""
+    if not isinstance(tm, dict) or not tm.get("matched_name"):
+        return None
+    ref_part = ""
+    card_idx = tm.get("card_index")
+    if card_idx is not None and card_idx < len(cards):
+        card_ref = cards[card_idx].get("ref") if isinstance(cards[card_idx], dict) else None
+        if card_ref is not None:
+            ref_part = f" \u2192 [{card_ref}]"
+    budget_flag = ""
+    if tm.get("price_in_budget") is False:
+        budget_flag = " [over budget]"
+    return f'>>> Target: "{tm["matched_name"]}" ({tm.get("confidence", 0):.2f}){ref_part}{budget_flag}'
+
+
+def _render_card_parts(card: dict[str, Any]) -> list[str]:
+    """Render a product card as compact parts list (name | price | rating | [AD])."""
+    name = card.get("name", "")
+    price = card.get("price")
+    rating = card.get("rating")
+    review_count = card.get("review_count")
+    sponsored = card.get("is_sponsored", False)
+    parts = [name] if name else []
+    if price is not None:
+        parts.append(str(price))
+    if rating is not None:
+        rating_str = f"★{rating}"
+        if review_count is not None:
+            rating_str += f"({review_count})"
+        parts.append(rating_str)
+    if sponsored:
+        parts.append("[AD]")
+    return parts
+
+
 def _render_ecommerce_section(ecom: dict[str, Any], page_type: str) -> list[str]:
     """Render ## Ecommerce section lines from metadata['ecommerce']. Never raises."""
     try:
@@ -120,21 +156,17 @@ def _render_ecommerce_section(ecom: dict[str, Any], page_type: str) -> list[str]
                 header_parts.append(f"Results: {total}")
             header_parts.append(f"Cards: {len(cards)}")
             lines.append(" | ".join(header_parts))
-            # Top 5 cards, compact format
+            # Top 5 cards, compact format with rating
             for card in cards[:5]:
                 if isinstance(card, dict):
-                    name = card.get("name", "")
-                    price = card.get("price")
-                    sponsored = card.get("is_sponsored", False)
-                    parts = [name] if name else []
-                    if price is not None:
-                        parts.append(str(price))
-                    if sponsored:
-                        parts.append("[AD]")
+                    parts = _render_card_parts(card)
                     if parts:
                         lines.append(f"  - {' | '.join(parts)}")
             if len(cards) > 5:
                 lines.append(f"  ...+{len(cards) - 5} more")
+            tm_line = _render_target_match_line(ecom.get("target_match", {}), cards)
+            if tm_line:
+                lines.append(tm_line)
 
         elif page_type == "listing":
             category = ecom.get("category")
@@ -146,15 +178,14 @@ def _render_ecommerce_section(ecom: dict[str, Any], page_type: str) -> list[str]
             lines.append(" | ".join(header_parts))
             for card in cards[:5]:
                 if isinstance(card, dict):
-                    name = card.get("name", "")
-                    price = card.get("price")
-                    parts = [name] if name else []
-                    if price is not None:
-                        parts.append(str(price))
+                    parts = _render_card_parts(card)
                     if parts:
                         lines.append(f"  - {' | '.join(parts)}")
             if len(cards) > 5:
                 lines.append(f"  ...+{len(cards) - 5} more")
+            tm_line = _render_target_match_line(ecom.get("target_match", {}), cards)
+            if tm_line:
+                lines.append(tm_line)
 
         elif page_type == "product_detail":
             name = ecom.get("name")
@@ -187,6 +218,11 @@ def _render_ecommerce_section(ecom: dict[str, Any], page_type: str) -> list[str]
                 if review_count is not None:
                     rating_str += f" ({review_count} reviews)"
                 lines.append(rating_str)
+            review_snippets = ecom.get("review_snippets", ())
+            if review_snippets:
+                lines.append("Reviews:")
+                for snippet in review_snippets[:3]:
+                    lines.append(f'  - "{snippet}"')
             if availability:
                 lines.append(f"Availability: {availability}")
             if options:
@@ -212,6 +248,14 @@ def _render_ecommerce_section(ecom: dict[str, Any], page_type: str) -> list[str]
                     cart_parts.append(f"Prereqs: {', '.join(prereqs)}")
                 if cart_parts:
                     lines.append("Cart: " + " | ".join(cart_parts))
+            # Extraction gaps — signal to agent which fields are missing
+            gaps = ecom.get("extraction_gaps", ())
+            if gaps:
+                lines.append(f"Missing: {', '.join(gaps)}")
+            # Match confidence for product_detail
+            mc = ecom.get("match_confidence")
+            if mc is not None:
+                lines.append(f"Match: {mc:.2f}")
         else:
             # Unknown page_type with ecommerce data — render as key-value
             return []

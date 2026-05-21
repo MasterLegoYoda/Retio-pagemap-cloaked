@@ -2,9 +2,7 @@
 
 # PageMap
 
-**The browsing MCP server that fits in your context window.**
-
-Compresses ~100K-token HTML into a 2-5K-token structured map while preserving every actionable element. AI agents can **read and interact** with any web page at 97% fewer tokens.
+PageMap converts raw HTML (100K+ tokens) into structured, AI-readable page maps (2-5K tokens) — a **97% token reduction**. It works as an MCP server, Python SDK, and CLI, supporting 16 page types and 30+ e-commerce sites. Agents can read, click, type, and navigate any web page.
 
 > *"Give your agent eyes and hands on the web."*
 
@@ -117,6 +115,7 @@ PageMap detects problems and tells your agent what to do:
 - **8 JSON-LD schemas** — Product, NewsArticle, VideoObject, FAQPage, Event, LocalBusiness, BreadcrumbList, and ItemList
 - **Metadata extraction** — Prices, ratings, reviews, descriptions, images from structured data and DOM fallbacks
 - **2-layer caching** — Cache hit (~10ms), content refresh (~500ms), full rebuild (~1.5s). Diff-based updates for unchanged sections
+- **Delta evidence packet output** - Optional `to_delta_packet()` serializer emits digest-bound evidence units, claim candidates, provenance, and authority flags for downstream memory/review systems without changing the default MCP output
 
 ### 10 Languages
 
@@ -157,6 +156,7 @@ Multi-architecture images (amd64/arm64) available on [Docker Hub](https://hub.do
 ```python
 import asyncio
 from pagemap.browser_session import BrowserSession
+from pagemap.delta_serializer import to_delta_packet
 from pagemap.page_map_builder import build_page_map_live
 from pagemap.serializer import to_agent_prompt, to_json
 
@@ -165,6 +165,7 @@ async def main():
         page_map = await build_page_map_live(session, "https://example.com/product/123")
         print(to_agent_prompt(page_map))   # Agent-optimized text format
         print(to_json(page_map))           # Structured JSON
+        print(to_delta_packet(page_map))   # Digest-bound evidence packet
         print(page_map.page_type)          # "product_detail"
         print(page_map.interactables)      # [Interactable(ref=1, role="button", ...)]
         print(page_map.metadata)           # {"name": "...", "price": "..."}

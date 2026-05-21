@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from .. import Interactable
 
 from ..sanitizer import sanitize_text
-from . import ListingResult
+from . import ListingResult, TargetProduct
 from ._card_extractor import _JSONLD_RE, extract_cards, find_filter_refs, find_pagination_refs
 
 logger = logging.getLogger(__name__)
@@ -89,6 +89,7 @@ def analyze_listing(
     metadata: dict[str, Any],
     page_url: str,
     navigation_hints: dict[str, Any],
+    target_product: TargetProduct | None = None,
 ) -> ListingResult:
     """Analyze a listing (category) page. Never raises."""
     try:
@@ -105,6 +106,13 @@ def analyze_listing(
         # Pagination refs
         pag = find_pagination_refs(interactables)
 
+        # Target product matching
+        target_match = None
+        if target_product is not None and cards:
+            from ._target_matcher import find_target_match
+
+            target_match = find_target_match(cards, target_product)
+
         return ListingResult(
             cards=cards,
             category=category,
@@ -114,6 +122,7 @@ def analyze_listing(
             next_ref=pag.next_ref,
             prev_ref=pag.prev_ref,
             load_more_ref=pag.load_more_ref,
+            target_match=target_match,
         )
 
     except Exception as e:

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .config_registry import ClassifierConfig
+    from .ecommerce import TargetProduct
 
 from pagemap.errors import ResourceExhaustionError
 
@@ -564,6 +565,7 @@ async def build_page_map_live(
     timer: PipelineTimer | None = None,
     spa_signals: dict | None = None,
     task_hint: str | None = None,
+    target_product: TargetProduct | None = None,
 ) -> PageMap:
     """Build a PageMap from a live browser session.
 
@@ -825,6 +827,7 @@ async def build_page_map_live(
                     metadata=metadata,
                     page_url=page_url,
                     navigation_hints=navigation_hints,
+                    target_product=target_product,
                 )
                 if ecom:
                     metadata["ecommerce"] = ecom

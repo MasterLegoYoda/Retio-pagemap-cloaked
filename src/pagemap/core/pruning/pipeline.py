@@ -39,7 +39,18 @@ from .pruner import PruneDecision, apply_budget_selection, boost_adjacent_chunks
 logger = logging.getLogger(__name__)
 
 
+_active_pruning_config: PruningConfig | None = None
+
+
+def set_active_pruning_config(config: PruningConfig | None) -> None:
+    """Set the server-wide active pruning config (called by CQP config_injector)."""
+    global _active_pruning_config
+    _active_pruning_config = config
+
+
 def _default_cfg() -> PruningConfig:
+    if _active_pruning_config is not None:
+        return _active_pruning_config
     from ..config_registry import DEFAULT_PRUNING_CONFIG
 
     return DEFAULT_PRUNING_CONFIG

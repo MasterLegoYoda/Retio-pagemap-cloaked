@@ -22,6 +22,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# ── Target product matching ────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class TargetProduct:
+    """Target product for intelligent matching."""
+
+    name: str
+    brand: str | None = None
+    max_price: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TargetMatch:
+    """Fuzzy match result against target product."""
+
+    card_index: int  # 0-based index in cards tuple
+    confidence: float  # 0.0-1.0
+    matched_name: str  # the card's name
+    price_in_budget: bool | None = None  # True if <= max_price, None if no max set
+
+
 # ── Feature flag (cached at module load) ───────────────────────────
 ECOMMERCE_ENABLED: bool = os.environ.get("ENABLE_ECOMMERCE", "1").lower() in (
     "1",
@@ -130,6 +153,8 @@ class ProductCard:
     position: int | None = None
     ref: int | None = None
     is_sponsored: bool = False
+    rating: float | None = None
+    review_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +183,7 @@ class SearchResult:
     load_more_ref: int | None = None
     current_page: int | None = None
     total_pages: int | None = None
+    target_match: TargetMatch | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +198,7 @@ class ListingResult:
     next_ref: int | None = None
     prev_ref: int | None = None
     load_more_ref: int | None = None
+    target_match: TargetMatch | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +220,8 @@ class ProductResult:
     gallery_images: tuple[str, ...] = ()
     selected_variant: dict[str, str] | None = None
     review_snippets: tuple[str, ...] = ()
+    match_confidence: float | None = None
+    extraction_gaps: tuple[str, ...] = ()  # fields that could not be extracted, e.g. ("price", "rating")
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +254,7 @@ def run_ecommerce_engine(
     metadata: dict[str, Any],
     page_url: str,
     navigation_hints: dict[str, Any],
+    target_product: TargetProduct | None = None,
 ) -> dict[str, Any] | None:
     """Route to the appropriate Layer 1 engine based on page_type.
 
@@ -246,6 +276,7 @@ def run_ecommerce_engine(
                 metadata=metadata,
                 page_url=page_url,
                 navigation_hints=navigation_hints,
+                target_product=target_product,
             )
 
         elif page_type == "listing":
@@ -258,6 +289,7 @@ def run_ecommerce_engine(
                 metadata=metadata,
                 page_url=page_url,
                 navigation_hints=navigation_hints,
+                target_product=target_product,
             )
 
         elif page_type == "product_detail":
@@ -270,6 +302,7 @@ def run_ecommerce_engine(
                 interactables=interactables,
                 metadata=metadata,
                 page_url=page_url,
+                target_product=target_product,
             )
             cart = analyze_cart_actions(
                 interactables=interactables,
@@ -315,6 +348,28 @@ def run_ecommerce_engine(
             )
         except Exception:  # nosec B110
             pass
+
+        # Target match telemetry (PII-safe: no product names)
+        if target_product is not None:
+            try:
+                from pagemap.telemetry import emit as _emit
+                from pagemap.telemetry.events import TARGET_MATCH_RESULT
+
+                _tm = result.get("target_match")
+                _mc = result.get("match_confidence")
+                _emit(
+                    TARGET_MATCH_RESULT,
+                    {
+                        "page_type": page_type,
+                        "target_name_len": len(target_product.name),
+                        "has_brand": target_product.brand is not None,
+                        "has_max_price": target_product.max_price is not None,
+                        "matched": _tm is not None or _mc is not None,
+                        "confidence": (_tm.get("confidence") if isinstance(_tm, dict) else _mc),
+                    },
+                )
+            except Exception:  # nosec B110
+                pass
 
         return result
 

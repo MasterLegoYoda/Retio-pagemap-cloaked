@@ -155,6 +155,174 @@ class TestEcommerceProductRendering:
         assert "Prereqs: Select Size" in text
 
 
+class TestEcommerceTargetMatchRendering:
+    def test_search_target_match_rendered(self):
+        ecom = {
+            "query": "lip sleeping mask",
+            "cards": [
+                {"name": "Laneige Lip Sleeping Mask Berry 20g", "price": 22.0, "ref": 23},
+                {"name": "Other Product", "price": 10.0},
+            ],
+            "target_match": {
+                "card_index": 0,
+                "confidence": 0.94,
+                "matched_name": "Laneige Lip Sleeping Mask Berry 20g",
+                "price_in_budget": True,
+            },
+        }
+        lines = _render_ecommerce_section(ecom, "search_results")
+        text = "\n".join(lines)
+        assert ">>> Target:" in text
+        assert "0.94" in text
+        assert "\u2192 [23]" in text
+
+    def test_listing_target_match_rendered(self):
+        ecom = {
+            "category": "Skincare",
+            "cards": [
+                {"name": "Lip Mask", "price": 20.0, "ref": 5},
+            ],
+            "target_match": {
+                "card_index": 0,
+                "confidence": 0.88,
+                "matched_name": "Lip Mask",
+                "price_in_budget": None,
+            },
+        }
+        lines = _render_ecommerce_section(ecom, "listing")
+        text = "\n".join(lines)
+        assert ">>> Target:" in text
+        assert "0.88" in text
+
+    def test_product_match_confidence_rendered(self):
+        ecom = {
+            "name": "Nike Air Max 90",
+            "price": 129.99,
+            "match_confidence": 0.96,
+        }
+        lines = _render_ecommerce_section(ecom, "product_detail")
+        text = "\n".join(lines)
+        assert "Match: 0.96" in text
+
+    def test_no_target_match_no_line(self):
+        ecom = {
+            "query": "test",
+            "cards": [{"name": "Product", "price": 10}],
+        }
+        lines = _render_ecommerce_section(ecom, "search_results")
+        text = "\n".join(lines)
+        assert ">>> Target:" not in text
+
+    def test_over_budget_flag(self):
+        ecom = {
+            "query": "test",
+            "cards": [{"name": "Expensive", "price": 999, "ref": 1}],
+            "target_match": {
+                "card_index": 0,
+                "confidence": 0.90,
+                "matched_name": "Expensive",
+                "price_in_budget": False,
+            },
+        }
+        lines = _render_ecommerce_section(ecom, "search_results")
+        text = "\n".join(lines)
+        assert "[over budget]" in text
+
+    def test_in_budget_no_flag(self):
+        ecom = {
+            "query": "test",
+            "cards": [{"name": "Product", "price": 50, "ref": 1}],
+            "target_match": {
+                "card_index": 0,
+                "confidence": 0.90,
+                "matched_name": "Product",
+                "price_in_budget": True,
+            },
+        }
+        lines = _render_ecommerce_section(ecom, "search_results")
+        text = "\n".join(lines)
+        assert "[over budget]" not in text
+        assert ">>> Target:" in text
+
+    def test_card_index_out_of_range(self):
+        """card_index beyond cards list should render without ref."""
+        ecom = {
+            "query": "test",
+            "cards": [{"name": "Product", "ref": 1}],
+            "target_match": {
+                "card_index": 99,
+                "confidence": 0.85,
+                "matched_name": "Product",
+            },
+        }
+        lines = _render_ecommerce_section(ecom, "search_results")
+        text = "\n".join(lines)
+        assert ">>> Target:" in text
+        assert "\u2192 [" not in text  # no ref since index is OOB
+
+    def test_card_no_ref(self):
+        """Card without ref field should render target without arrow."""
+        ecom = {
+            "query": "test",
+            "cards": [{"name": "Product", "price": 10}],  # no ref
+            "target_match": {
+                "card_index": 0,
+                "confidence": 0.85,
+                "matched_name": "Product",
+            },
+        }
+        lines = _render_ecommerce_section(ecom, "search_results")
+        text = "\n".join(lines)
+        assert ">>> Target:" in text
+        assert "\u2192 [" not in text
+
+    def test_empty_target_match_dict(self):
+        """Empty target_match dict should not render target line."""
+        ecom = {
+            "query": "test",
+            "cards": [{"name": "Product"}],
+            "target_match": {},
+        }
+        lines = _render_ecommerce_section(ecom, "search_results")
+        text = "\n".join(lines)
+        assert ">>> Target:" not in text
+
+    def test_target_match_none_value(self):
+        """target_match=None should not render target line."""
+        ecom = {
+            "query": "test",
+            "cards": [{"name": "Product"}],
+            "target_match": None,
+        }
+        lines = _render_ecommerce_section(ecom, "search_results")
+        text = "\n".join(lines)
+        assert ">>> Target:" not in text
+
+    def test_match_confidence_zero(self):
+        """match_confidence=0.0 should still render (it's a valid value)."""
+        ecom = {"name": "Product", "price": 10, "match_confidence": 0.0}
+        lines = _render_ecommerce_section(ecom, "product_detail")
+        text = "\n".join(lines)
+        # 0.0 is falsy but not None — should NOT render (threshold means it shouldn't exist)
+        # Actually match_confidence=0.0 is a valid float, but `if mc is not None` will pass
+        # Let's verify behavior: 0.0 is not None so it renders
+        assert "Match: 0.00" in text
+
+    def test_match_confidence_none(self):
+        """match_confidence=None should not render."""
+        ecom = {"name": "Product", "price": 10, "match_confidence": None}
+        lines = _render_ecommerce_section(ecom, "product_detail")
+        text = "\n".join(lines)
+        assert "Match:" not in text
+
+    def test_no_match_confidence_key(self):
+        """Missing match_confidence key should not render."""
+        ecom = {"name": "Product", "price": 10}
+        lines = _render_ecommerce_section(ecom, "product_detail")
+        text = "\n".join(lines)
+        assert "Match:" not in text
+
+
 class TestEcommerceEmpty:
     def test_empty_ecom_returns_empty(self):
         lines = _render_ecommerce_section({}, "product_detail")

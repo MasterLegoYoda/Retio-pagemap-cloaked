@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pagemap.core.config_registry import ClassifierConfig, PruningConfig
+    from pagemap.core.ecommerce import TargetProduct
 
 import structlog
 from mcp.server.fastmcp import Context as McpContext, FastMCP, Image as McpImage
@@ -174,6 +175,10 @@ from .url_validation import (
 logger = logging.getLogger("pagemap.server")
 
 # Initialize MCP server
+#
+# transport_security: disable DNS rebinding protection so Cloud Run custom
+# domains (api.retio.ai, *.a.run.app) are accepted.  Our own GatewayMiddleware
+# + Auth middleware handle host/origin validation at the application layer.
 mcp = FastMCP(
     name="retio-page-map",
     instructions=(
@@ -183,6 +188,9 @@ mcp = FastMCP(
         "Use fill_form to fill multiple form fields in one call, "
         "and wait_for to wait for async content to appear or disappear. "
         "Users are responsible for complying with target website terms of service and applicable laws."
+    ),
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
     ),
 )
 
@@ -739,6 +747,8 @@ _cqp_eqpv_registry: object | None = None  # C1: EQPVRegistry — initialized in 
 _cqp_transfer_registry: object | None = None  # A3: CrossSiteTransferRegistry
 _cqp_cold_start: object | None = None  # ColdStartManager
 _cqp_thompson: object | None = None  # ThompsonSampler
+_cqp_validity_gate: object | None = None  # SiteValidityGate
+_cqp_failure_capture: object | None = None  # FailureSnapshotCapture
 _EQPV_CACHE_MAP: dict[str, str] = {"A": "hit", "B": "refresh", "C": "miss"}
 _outbox_poller: object | None = None  # S3: OutboxPoller — initialized when PAGEMAP_ENABLE_OUTBOX=1
 _paddle_config: object | None = None  # S8: PaddleConfig — initialized in _run_http_mode()
@@ -1042,6 +1052,9 @@ async def get_page_map(
     task_hint: str | None = None,
     detail_level: str | None = None,
     max_content_tokens: int | None = None,
+    target_product: str | None = None,
+    target_brand: str | None = None,
+    target_max_price: float | None = None,
     mcp_ctx: McpContext = None,
 ) -> str:
     """Get structured Page Map for a web page.
@@ -1066,6 +1079,10 @@ async def get_page_map(
             'verbose' - most content preserved (~12000 tokens).
         max_content_tokens: Override token budget for pruned content.
             Takes precedence over detail_level. Clamped to [100, 50000].
+        target_product: Target product name for intelligent matching.
+            When provided, the ecommerce section highlights the best-matching card.
+        target_brand: Target brand name (strengthens matching for weaker name matches).
+        target_max_price: Maximum acceptable price (flags whether match is in budget).
     """
     ctx, lock = await _acquire_context(mcp_ctx)
     ctx = _resolve_multi_tab_context(ctx)
@@ -1096,13 +1113,28 @@ async def get_page_map(
                 _record_tool_call("get_page_map", session_id=ctx.session_id, url=url, request_id=ctx.request_id)
                 # S8-3: Tool authorization gate — capture before impl so URL reflects pre-navigation state
                 _authz_active_url = ctx.cache.active.url if ctx.cache.active is not None else None
+                # Construct TargetProduct if target_product name provided
+                _tp = None
+                if target_product:
+                    from pagemap.core.ecommerce import TargetProduct as _TP
+
+                    _tp = _TP(name=target_product, brand=target_brand, max_price=target_max_price)
+
                 result = await _get_page_map_impl(
                     url,
                     task_hint=task_hint,
                     detail_level=detail_level,
                     max_content_tokens=max_content_tokens,
+                    target_product=_tp,
                     ctx=ctx,
                 )
+                # Billing: write actual cache tier to ASGI scope for
+                # CreditMiddleware post-refund (pre-authorize/settle).
+                if mcp_ctx is not None:
+                    with suppress(Exception):  # nosec B110
+                        _req = mcp_ctx.request_context.request
+                        if _req is not None and hasattr(_req, "state"):
+                            _req.state.cache_tier = ctx.cache.last_tier
                 result = _apply_tool_authz(
                     "get_page_map",
                     result,
@@ -1131,6 +1163,7 @@ async def _get_page_map_impl(
     task_hint: str | None = None,
     detail_level: str | None = None,
     max_content_tokens: int | None = None,
+    target_product: TargetProduct | None = None,
     ctx: RequestContext | None = None,
 ) -> str:
     if ctx is None:
@@ -1145,6 +1178,7 @@ async def _get_page_map_impl(
                 task_hint=task_hint,
                 detail_level=detail_level,
                 max_content_tokens=max_content_tokens,
+                target_product=target_product,
                 ctx=ctx,
             ),
         )
@@ -1153,6 +1187,7 @@ async def _get_page_map_impl(
         task_hint=task_hint,
         detail_level=detail_level,
         max_content_tokens=max_content_tokens,
+        target_product=target_product,
         ctx=ctx,
     )
 
@@ -1163,6 +1198,7 @@ async def _get_page_map_inner(
     task_hint: str | None = None,
     detail_level: str | None = None,
     max_content_tokens: int | None = None,
+    target_product: TargetProduct | None = None,
     ctx: RequestContext,
 ) -> str:
     import time as _time
@@ -1331,6 +1367,7 @@ async def _get_page_map_inner(
                     timer=timer,
                     spa_signals=fingerprint.spa_signals if fingerprint else None,
                     task_hint=task_hint,
+                    target_product=target_product,
                 ),
                 timeout=PAGE_MAP_TIMEOUT_SECONDS,
             )
@@ -1511,6 +1548,46 @@ async def _get_page_map_inner(
             except Exception:  # nosec B110
                 pass
 
+        # CQP: Site validity observation + failure capture trigger
+        if _cqp_validity_gate is not None:
+            try:
+                _vg_domain = extract_template_domain(page_map.url)
+                _vg_page_state = getattr(page_map, "page_state", "")
+                _vg_confidence = getattr(page_map, "page_state_confidence", 0.0)
+                _cqp_validity_gate.record_page_observation(  # type: ignore[union-attr]
+                    domain=_vg_domain,
+                    http_status=getattr(page_map, "http_status", 200),
+                    page_state=_vg_page_state,
+                    page_state_confidence=_vg_confidence,
+                    token_count=page_map.pruned_tokens,
+                    url=page_map.url,
+                )
+            except Exception:  # nosec B110
+                pass
+
+        if _cqp_failure_capture is not None:
+            try:
+                # Trigger failure capture for low composite quality score
+                _fc_quality = locals().get("quality")
+                _fc_composite = getattr(_fc_quality, "composite", 0.0) if _fc_quality is not None else 0.0
+                if _fc_composite > 0 and _fc_composite < 0.4:
+                    from pagemap.cloud.cqp.failure_capture import FailureSnapshot
+
+                    _fc_domain = extract_template_domain(page_map.url)
+                    _cqp_failure_capture.enqueue(
+                        FailureSnapshot(  # type: ignore[union-attr]
+                            url=page_map.url,
+                            domain=_fc_domain,
+                            page_type=getattr(page_map, "page_type", ""),
+                            trigger_signal="low_quality",
+                            quality_score=_fc_composite,
+                            page_map_output=str(page_map)[:10000],
+                            source="quality_score",
+                        )
+                    )
+            except Exception:  # nosec B110
+                pass
+
         # ── Auto-dismiss barrier (opt-in, max 1 attempt) ──
         if _AUTO_DISMISS_ENABLED and page_map.barrier is not None:
             _ad_barrier = page_map.barrier
@@ -1544,6 +1621,7 @@ async def _get_page_map_inner(
                                     template_cache=ctx.template_cache,
                                     timer=timer,
                                     task_hint=task_hint,
+                                    target_product=target_product,
                                 ),
                                 timeout=_ad_remaining - 3.0,
                             )
@@ -3887,6 +3965,7 @@ def main(argv: list[str] | None = None):
             args.host,
             args.port,
             trusted_proxies=args.trusted_proxy,
+            cors_origins=args.cors_origin,
             drain_timeout=args.drain_timeout,
             enable_otel_traces=args.enable_otel_traces,
             telemetry_enabled=args.telemetry,

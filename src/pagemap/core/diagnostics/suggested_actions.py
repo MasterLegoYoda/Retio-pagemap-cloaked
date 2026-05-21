@@ -18,15 +18,19 @@ from . import (
 )
 
 
-def suggest_page_recovery(diagnosis: PageStateDiagnosis, **kw) -> tuple[SuggestedAction, ...]:
+def suggest_page_recovery(
+    diagnosis: PageStateDiagnosis, *, target_product: object | None = None, **kw
+) -> tuple[SuggestedAction, ...]:
     """Suggest recovery actions for a page failure state. Never raises."""
     try:
-        return _suggest_page_impl(diagnosis)
+        return _suggest_page_impl(diagnosis, target_product=target_product)
     except Exception:
         return ()
 
 
-def _suggest_page_impl(diagnosis: PageStateDiagnosis) -> tuple[SuggestedAction, ...]:
+def _suggest_page_impl(
+    diagnosis: PageStateDiagnosis, *, target_product: object | None = None
+) -> tuple[SuggestedAction, ...]:
     match diagnosis.state:
         case PageFailureState.BOT_BLOCKED:
             return (
@@ -39,14 +43,22 @@ def _suggest_page_impl(diagnosis: PageStateDiagnosis) -> tuple[SuggestedAction, 
                 SuggestedAction("navigate", "Try alternate URL", 2),
             )
         case PageFailureState.EMPTY_RESULTS:
+            if target_product is not None and hasattr(target_product, "name"):
+                search_hint = f"Search for '{target_product.name}'"
+            else:
+                search_hint = "Try broader search"
             return (
-                SuggestedAction("navigate", "Try broader search", 1),
+                SuggestedAction("navigate", search_hint, 1),
                 SuggestedAction("scroll_page", "Check lazy-loaded results", 2, {"direction": "down"}),
             )
         case PageFailureState.OUT_OF_STOCK:
+            if target_product is not None and hasattr(target_product, "name"):
+                alt_hint = f"Search '{target_product.name}' on another site"
+            else:
+                alt_hint = "Search alternatives"
             return (
                 SuggestedAction("get_page_map", "Refresh to check stock", 1),
-                SuggestedAction("navigate", "Search alternatives", 2),
+                SuggestedAction("navigate", alt_hint, 2),
             )
         case PageFailureState.LOGIN_REQUIRED:
             return (
