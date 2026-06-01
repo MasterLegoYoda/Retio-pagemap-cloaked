@@ -27,6 +27,7 @@ import functools
 import json
 import logging
 import os
+import shlex
 import socket  # noqa: F401 — tests patch pagemap.server.socket; url_validation uses lazy import
 import sys
 import threading
@@ -3679,6 +3680,28 @@ def _parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="",
         help="Path to SQLite database (default: ~/.pagemap/pagemap.db)",
     )
+    parser.add_argument("--cloak-proxy", default="", help="Proxy URL or server for CloakBrowser.")
+    parser.add_argument("--cloak-geoip", action="store_true", default=False, help="Infer locale/timezone from proxy IP.")
+    parser.add_argument("--cloak-timezone", default="", help="IANA timezone passed to CloakBrowser.")
+    parser.add_argument("--cloak-locale", default="", help="Locale passed to CloakBrowser fingerprint flags.")
+    parser.add_argument(
+        "--cloak-backend",
+        choices=("playwright", "patchright"),
+        default="",
+        help="CloakBrowser backend (default: playwright).",
+    )
+    parser.add_argument("--cloak-humanize", action="store_true", default=False, help="Enable CloakBrowser humanized input.")
+    parser.add_argument(
+        "--cloak-human-preset",
+        choices=("default", "careful"),
+        default="",
+        help="CloakBrowser humanization preset.",
+    )
+    parser.add_argument("--cloak-human-config-json", default="", help="JSON object with CloakBrowser humanization overrides.")
+    parser.add_argument("--cloak-extension-path", action="append", default=None, help="Chrome extension path. Repeatable.")
+    parser.add_argument("--cloak-persistent", action="store_true", default=False, help="Use per-session persistent profiles.")
+    parser.add_argument("--cloak-profile-root", default="", help="Directory for CloakBrowser persistent profiles.")
+    parser.add_argument("--cloak-extra-arg", action="append", default=None, help="Extra Chromium arg passed via CloakBrowser.")
     args, _ = parser.parse_known_args(argv)
 
     # Env var overrides
@@ -3736,6 +3759,33 @@ def _parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _apply_cloak_args_to_env(args) -> None:
+    """Expose CLI Cloak options through BrowserConfig's env-backed defaults."""
+    mapping = {
+        "cloak_proxy": "PAGEMAP_CLOAK_PROXY",
+        "cloak_timezone": "PAGEMAP_CLOAK_TIMEZONE",
+        "cloak_locale": "PAGEMAP_CLOAK_LOCALE",
+        "cloak_backend": "PAGEMAP_CLOAK_BACKEND",
+        "cloak_human_preset": "PAGEMAP_CLOAK_HUMAN_PRESET",
+        "cloak_human_config_json": "PAGEMAP_CLOAK_HUMAN_CONFIG_JSON",
+        "cloak_profile_root": "PAGEMAP_CLOAK_PROFILE_ROOT",
+    }
+    for attr, env_name in mapping.items():
+        value = getattr(args, attr, "")
+        if value:
+            os.environ[env_name] = value
+    if getattr(args, "cloak_geoip", False):
+        os.environ["PAGEMAP_CLOAK_GEOIP"] = "1"
+    if getattr(args, "cloak_humanize", False):
+        os.environ["PAGEMAP_CLOAK_HUMANIZE"] = "1"
+    if getattr(args, "cloak_persistent", False):
+        os.environ["PAGEMAP_CLOAK_PERSISTENT"] = "1"
+    if getattr(args, "cloak_extension_path", None):
+        os.environ["PAGEMAP_CLOAK_EXTENSION_PATHS"] = ",".join(args.cloak_extension_path)
+    if getattr(args, "cloak_extra_arg", None):
+        os.environ["PAGEMAP_CLOAK_EXTRA_ARGS"] = " ".join(shlex.quote(arg) for arg in args.cloak_extra_arg)
+
+
 def main(argv: list[str] | None = None):
     """Entry point for the MCP server."""
     import atexit
@@ -3757,6 +3807,7 @@ def main(argv: list[str] | None = None):
         _cqp_emitter
 
     args = _parse_server_args(argv if argv is not None else sys.argv[1:])
+    _apply_cloak_args_to_env(args)
     _transport_mode = args.transport
     _allow_local = args.allow_local
     _ignore_robots = args.ignore_robots

@@ -19,6 +19,7 @@ def _mock_browser():
     context = AsyncMock()
     context.route = AsyncMock()
     context.on = MagicMock()
+    context.pages = []
     page = AsyncMock()
     context.new_page = AsyncMock(return_value=page)
     browser.new_context = AsyncMock(return_value=context)
@@ -93,14 +94,12 @@ class TestPoolStopClosesContextOnly:
 
 
 class TestStandaloneStopClosesAll:
-    """stop() in standalone mode closes everything (existing behavior preserved)."""
+    """stop() in standalone mode closes context and Cloak-patched browser."""
 
-    async def test_closes_browser_and_playwright(self):
+    async def test_closes_browser(self):
         browser, context, page = _mock_browser()
-        pw = AsyncMock()
 
         session = BrowserSession()
-        session._playwright = pw
         session._browser = browser
         session._context = context
         session._page = page
@@ -110,7 +109,6 @@ class TestStandaloneStopClosesAll:
 
         context.close.assert_called_once()
         browser.close.assert_called_once()
-        pw.stop.assert_called_once()
         assert session._browser is None
         assert session._playwright is None
 
@@ -133,9 +131,7 @@ class TestCreateContextReuse:
         with (
             patch.object(session, "_create_context", new_callable=AsyncMock) as mock_cc,
             patch.object(session, "_launch_browser", new_callable=AsyncMock),
-            patch("pagemap.server.browser_session.async_playwright") as mock_pw,
         ):
-            mock_pw.return_value.start = AsyncMock(return_value=AsyncMock())
             session._browser = browser
             await session.start()
             mock_cc.assert_called_once_with(browser)

@@ -26,31 +26,27 @@ from pagemap.browser_session import BrowserConfig, BrowserSession
 # ---------------------------------------------------------------------------
 
 
-def _mock_playwright_and_browser():
-    """Create mock playwright, browser for patching."""
-    pw = AsyncMock()
+def _mock_cloak_browser():
+    """Create mock CloakBrowser browser for patching."""
     browser = AsyncMock()
     browser.is_connected = MagicMock(return_value=True)
     browser.close = AsyncMock()
-    pw.chromium.launch = AsyncMock(return_value=browser)
-    pw.stop = AsyncMock()
-    return pw, browser
+    return browser
 
 
 @pytest.fixture
 def mock_pw():
-    """Patch async_playwright to return mock objects."""
-    pw, browser = _mock_playwright_and_browser()
-    with patch("pagemap.server.browser_pool.async_playwright") as mock_apw:
-        mock_start = AsyncMock(return_value=pw)
-        mock_apw.return_value.start = mock_start
-        yield pw, browser
+    """Patch CloakBrowser launch to return a mock browser."""
+    browser = _mock_cloak_browser()
+    with patch("pagemap.server.browser_pool.launch_cloak_browser", new=AsyncMock(return_value=browser)):
+        yield None, browser
 
 
 def _mock_browser_session():
     """Create a mock BrowserSession for pool tests."""
     sess = AsyncMock(spec=BrowserSession)
     sess.start_from_pool = AsyncMock()
+    sess.start_persistent = AsyncMock()
     sess.stop = AsyncMock()
     sess.is_alive = AsyncMock(return_value=True)
     sess.config = BrowserConfig()
@@ -70,7 +66,6 @@ class TestContextManagerLifecycle:
         pw, browser = mock_pw
         async with BrowserPool(max_contexts=2) as pool:
             assert pool._browser is browser
-            assert pool._playwright is pw
             assert pool._semaphore is not None
             assert pool._reaper_task is not None
 
@@ -79,9 +74,7 @@ class TestContextManagerLifecycle:
         async with BrowserPool(max_contexts=2) as pool:
             pass
         browser.close.assert_called_once()
-        pw.stop.assert_called_once()
         assert pool._browser is None
-        assert pool._playwright is None
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +146,19 @@ class TestAcquireCreatesContext:
                 assert "new-sess" in pool._contexts
                 # Clean up
                 await pool.release("new-sess")
+
+    async def test_persistent_mode_creates_persistent_session(self, mock_pw):
+        with patch("pagemap.server.browser_pool.BrowserSession") as MockBS:
+            mock_sess = _mock_browser_session()
+            MockBS.return_value = mock_sess
+
+            config = BrowserConfig(persistent_profile=True)
+            async with BrowserPool(max_contexts=3, config=config) as pool:
+                sess = await pool.acquire("persistent-sess")
+                assert sess is mock_sess
+                mock_sess.start_persistent.assert_called_once_with("persistent-sess")
+                mock_sess.start_from_pool.assert_not_called()
+                await pool.release("persistent-sess")
 
 
 class TestAcquireReturnsExisting:
@@ -394,7 +400,6 @@ class TestShutdownClosesAll:
 
             assert len(pool._contexts) == 0
             assert pool._browser is None
-            assert pool._playwright is None
             # Sessions should have been stopped
             assert mock_sess.stop.call_count >= 2
 

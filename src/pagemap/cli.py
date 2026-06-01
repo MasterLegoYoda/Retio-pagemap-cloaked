@@ -449,9 +449,9 @@ def cmd_try(args: argparse.Namespace) -> None:
     except KeyboardInterrupt:
         raise
     except Exception as e:
-        if _is_playwright_not_installed(e):
+        if _is_browser_binary_missing(e):
             print(
-                "Playwright browser not installed.\nRun:  playwright install chromium\nThen: pagemap try <URL>",
+                "CloakBrowser binary not installed.\nRun:  cloakbrowser install\nThen: pagemap try <URL>",
                 file=sys.stderr,
             )
         else:
@@ -468,16 +468,10 @@ def cmd_try(args: argparse.Namespace) -> None:
     print_step("Docs: https://github.com/Retio-ai/Retio-pagemap")
 
 
-def _is_playwright_not_installed(e: Exception) -> bool:
-    """Check if the error is due to missing Playwright browser binaries."""
-    try:
-        from playwright._impl._errors import Error as PlaywrightError
-
-        if isinstance(e, PlaywrightError):
-            return "executable doesn't exist" in str(e).lower()
-    except ImportError:
-        pass
-    return "executable doesn't exist" in str(e).lower()
+def _is_browser_binary_missing(e: Exception) -> bool:
+    """Check if the error is due to missing browser binaries."""
+    msg = str(e).lower()
+    return "executable doesn't exist" in msg or "cloakbrowser" in msg and "install" in msg
 
 
 def cmd_build(args: argparse.Namespace) -> None:

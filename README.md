@@ -1,8 +1,10 @@
 <!-- mcp-name: io.github.Retio-ai/pagemap -->
 
-# PageMap
+# PageMap CloakBrowser Fork
 
-PageMap converts raw HTML (100K+ tokens) into structured, AI-readable page maps (2-5K tokens) — a **97% token reduction**. It works as an MCP server, Python SDK, and CLI, supporting 16 page types and 30+ e-commerce sites. Agents can read, click, type, and navigate any web page.
+This is a personal fork of Retio PageMap with first-class [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) integration. PageMap still converts raw HTML (100K+ tokens) into structured, AI-readable page maps (2-5K tokens) — a **97% token reduction** — but live browsing now runs through CloakBrowser's patched Chromium instead of stock Playwright Chromium.
+
+CloakBrowser adds source-level browser fingerprint patches, proxy-aware locale/timezone options, optional humanized input, extension loading, persistent profiles, and an optional Patchright backend. The PageMap MCP tools and compression pipeline remain the same: agents can read, click, type, and navigate any web page through the usual MCP server, Python SDK, and CLI surfaces.
 
 > *"Give your agent eyes and hands on the web."*
 
@@ -40,7 +42,7 @@ PageMap gives your agent a **compressed, actionable** view of any web page:
 
 ## Quick Start
 
-Chromium is auto-installed on first use — no manual `playwright install` needed.
+This fork uses [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) for live browsing. It downloads its patched Chromium binary on first use, or you can preinstall it with `cloakbrowser install`.
 
 ### Install
 
@@ -205,18 +207,24 @@ Users are responsible for complying with the terms of service of target websites
 
 **"spawn uvx ENOENT" (Claude Desktop on macOS)** — Claude Desktop does not inherit your shell PATH. Run `which uvx` and use the absolute path in your config.
 
-**First page takes a long time** — Chromium cold start takes ~10-30s on first navigation. Subsequent pages load in 1-3 seconds.
+**First page takes a long time** — CloakBrowser binary download and Chromium cold start can take ~10-30s on first navigation. Subsequent pages load in 1-3 seconds.
 
 **Localhost blocked** — Use `--allow-local` flag or set `PAGEMAP_ALLOW_LOCAL=1`.
 
-**Chromium not found** — Run `pip install retio-pagemap && playwright install chromium` to install manually.
+**CloakBrowser binary not found** — Run `pip install retio-pagemap && cloakbrowser install` to install manually.
+
+**CloakBrowser options** — This fork runs live browsing through CloakBrowser. Useful knobs:
+`PAGEMAP_CLOAK_PROXY`, `PAGEMAP_CLOAK_GEOIP=1`, `PAGEMAP_CLOAK_TIMEZONE`,
+`PAGEMAP_CLOAK_LOCALE`, `PAGEMAP_CLOAK_BACKEND=patchright`,
+`PAGEMAP_CLOAK_HUMANIZE=1`, `PAGEMAP_CLOAK_EXTENSION_PATHS`, and
+`PAGEMAP_CLOAK_PERSISTENT=1`.
 
 ---
 
 ## Requirements
 
 - Python 3.11+
-- Chromium (auto-installed on first use)
+- CloakBrowser patched Chromium, installed automatically on first use or manually with `cloakbrowser install`
 
 ## Community
 
@@ -230,7 +238,7 @@ Have a question or idea? Join the conversation in [GitHub Discussions](https://g
 git clone https://github.com/Retio-ai/Retio-pagemap.git
 cd Retio-pagemap
 uv sync --group dev
-playwright install chromium
+cloakbrowser install
 uv run pytest --tb=short -q
 ```
 

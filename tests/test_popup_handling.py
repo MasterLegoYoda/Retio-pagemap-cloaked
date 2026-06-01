@@ -207,6 +207,7 @@ def _build_mock_chain():
     mock_context.new_page = AsyncMock(return_value=mock_page)
     mock_context.route = AsyncMock()
     mock_context.on = MagicMock()
+    mock_context.pages = []
 
     mock_browser = AsyncMock()
     mock_browser.new_context = AsyncMock(return_value=mock_context)
@@ -227,7 +228,7 @@ class TestPageHandlerRegistration:
     async def test_page_handler_registered_on_context(self):
         mock_pw_cm, _, _, mock_context, _ = _build_mock_chain()
 
-        with patch("pagemap.server.browser_session.async_playwright", return_value=mock_pw_cm):
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=mock_browser)):
             session = BrowserSession()
             await session.start()
 

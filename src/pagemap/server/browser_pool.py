@@ -24,13 +24,13 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from types import TracebackType
 
-from playwright.async_api import Browser, Playwright, async_playwright
+from playwright.async_api import Browser
 
 from .browser_session import (
     BrowserConfig,
     BrowserSession,
-    _auto_install_chromium,
-    chromium_launch_args,
+    cloak_launch_args,
+    launch_cloak_browser,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,8 +99,8 @@ class BrowserPool:
         self._idle_timeout = idle_timeout
         self._config = config or BrowserConfig()
 
-        self._playwright: Playwright | None = None
         self._browser: Browser | None = None
+        self._started: bool = False
         self._semaphore: asyncio.Semaphore | None = None
         self._available_slots: int = max_contexts
         self._contexts: dict[str, _PooledContext] = {}
@@ -111,43 +111,23 @@ class BrowserPool:
 
     @staticmethod
     def _chromium_launch_args(config: BrowserConfig) -> list[str]:
-        """Return hardened Chromium launch arguments."""
-        return chromium_launch_args(config)
+        """Return PageMap's extra CloakBrowser launch arguments."""
+        return cloak_launch_args(config)
 
     async def __aenter__(self) -> BrowserPool:
-        self._playwright = await async_playwright().start()
-        args = self._chromium_launch_args(self._config)
-        try:
-            self._browser = await self._playwright.chromium.launch(
-                headless=self._config.headless,
-                args=args,
-            )
-        except Exception as exc:
-            if "executable doesn't exist" in str(exc).lower():
-                if await _auto_install_chromium():
-                    self._browser = await self._playwright.chromium.launch(
-                        headless=self._config.headless,
-                        args=args,
-                    )
-                else:
-                    await self._playwright.stop()
-                    self._playwright = None
-                    raise RuntimeError(
-                        "Chromium is not installed and auto-install failed. Please run: playwright install chromium"
-                    ) from exc
-            else:
-                await self._playwright.stop()
-                self._playwright = None
-                raise
+        if not self._config.persistent_profile:
+            self._browser = await launch_cloak_browser(self._config)
 
         self._semaphore = asyncio.Semaphore(self._max_contexts)
         self._available_slots = self._max_contexts
         self._shutdown_event.clear()
+        self._started = True
         self._start_reaper()
         logger.info(
-            "BrowserPool started (max_contexts=%d, idle_timeout=%.0fs)",
+            "BrowserPool started (max_contexts=%d, idle_timeout=%.0fs, persistent=%s)",
             self._max_contexts,
             self._idle_timeout,
+            self._config.persistent_profile,
         )
         return self
 
@@ -224,7 +204,10 @@ class BrowserPool:
 
     def health(self) -> PoolHealth:
         """Return a snapshot of pool health."""
-        browser_ok = self._browser is not None and self._browser.is_connected()
+        if self._config.persistent_profile:
+            browser_ok = self._started
+        else:
+            browser_ok = self._browser is not None and self._browser.is_connected()
         waiting = max(0, len(self._contexts) - (self._max_contexts - self._available_slots))
         return PoolHealth(
             active=len(self._contexts),
@@ -251,7 +234,12 @@ class BrowserPool:
             return entry.session
 
         sess = BrowserSession(self._config)
-        await sess.start_from_pool(self._browser)
+        if self._config.persistent_profile:
+            await sess.start_persistent(session_id)
+        else:
+            if self._browser is None:
+                raise RuntimeError("BrowserPool shared browser is not started")
+            await sess.start_from_pool(self._browser)
         entry = _PooledContext(session_id=session_id, session=sess)
         self._contexts[session_id] = entry
         logger.info("Pool created session: %s (active=%d)", session_id, len(self._contexts))
@@ -319,9 +307,6 @@ class BrowserPool:
             with suppress(Exception):
                 await self._browser.close()
             self._browser = None
-        if self._playwright:
-            with suppress(Exception):
-                await self._playwright.stop()
-            self._playwright = None
+        self._started = False
 
         logger.info("BrowserPool shut down")

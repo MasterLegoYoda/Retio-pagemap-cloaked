@@ -8,6 +8,10 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+.claude-plugin/
+.cursor-plugin
+.codex/
+.devcontainer
 
 # Build
 dist/

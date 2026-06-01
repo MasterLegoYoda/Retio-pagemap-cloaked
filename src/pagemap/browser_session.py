@@ -16,8 +16,11 @@ from pagemap.server.browser_session import (  # noqa: F401
     _auto_install_chromium,
     _cdp_ax_nodes_to_tree,
     _is_browser_dead_error,
+    cloak_launch_args,
     chromium_launch_args,
     create_session,
+    launch_cloak_browser,
+    launch_cloak_persistent_context,
 )
 
 __all__ = [
@@ -36,6 +39,9 @@ __all__ = [
     "_auto_install_chromium",
     "_cdp_ax_nodes_to_tree",
     "_is_browser_dead_error",
+    "cloak_launch_args",
     "chromium_launch_args",
     "create_session",
+    "launch_cloak_browser",
+    "launch_cloak_persistent_context",
 ]

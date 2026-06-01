@@ -14,12 +14,13 @@ import json
 import logging
 import os
 import secrets
-import sys
+import shlex
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from playwright.async_api import (
     Browser,
@@ -27,9 +28,7 @@ from playwright.async_api import (
     CDPSession,
     Dialog,
     Page,
-    Playwright,
     Route,
-    async_playwright,
 )
 
 from pagemap.errors import BrowserError
@@ -86,6 +85,47 @@ BOT_USER_AGENT = f"PageMapBot/{_PAGEMAP_VERSION} (+https://github.com/Retio-ai/p
 from pagemap.dom_converters import _cdp_ax_nodes_to_tree as _cdp_ax_nodes_to_tree  # noqa: F401, E402
 
 
+def _env_str(name: str) -> str | None:
+    value = os.environ.get(name, "").strip()
+    return value or None
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return default
+    return value in ("1", "true", "yes", "on")
+
+
+def _env_list(name: str) -> list[str]:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _env_args(name: str) -> list[str]:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return []
+    return shlex.split(value)
+
+
+def _env_json_obj(name: str) -> dict[str, Any] | None:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        logger.warning("%s is not valid JSON; ignoring", name)
+        return None
+    if isinstance(parsed, dict):
+        return parsed
+    logger.warning("%s must decode to a JSON object; ignoring", name)
+    return None
+
+
 @dataclass
 class BrowserConfig:
     """Browser launch configuration."""
@@ -101,6 +141,26 @@ class BrowserConfig:
     settle_max_ms: int = 3000  # Maximum settle wait (ms)
     wait_strategy: str = "hybrid"  # "hybrid" | "networkidle" | "load"
     networkidle_budget_ms: int = 6000  # hybrid mode: networkidle attempt budget
+    proxy: str | dict[str, str] | None = field(default_factory=lambda: _env_str("PAGEMAP_CLOAK_PROXY"))
+    geoip: bool = field(default_factory=lambda: _env_bool("PAGEMAP_CLOAK_GEOIP", False))
+    timezone: str | None = field(default_factory=lambda: _env_str("PAGEMAP_CLOAK_TIMEZONE"))
+    cloak_locale: str | None = field(default_factory=lambda: _env_str("PAGEMAP_CLOAK_LOCALE"))
+    cloak_backend: str | None = field(default_factory=lambda: _env_str("PAGEMAP_CLOAK_BACKEND"))
+    humanize: bool = field(default_factory=lambda: _env_bool("PAGEMAP_CLOAK_HUMANIZE", False))
+    human_preset: str = field(default_factory=lambda: os.environ.get("PAGEMAP_CLOAK_HUMAN_PRESET", "default"))
+    human_config: dict[str, Any] | None = field(
+        default_factory=lambda: _env_json_obj("PAGEMAP_CLOAK_HUMAN_CONFIG_JSON")
+    )
+    extension_paths: tuple[str, ...] = field(
+        default_factory=lambda: tuple(_env_list("PAGEMAP_CLOAK_EXTENSION_PATHS"))
+    )
+    stealth_args: bool = field(default_factory=lambda: _env_bool("PAGEMAP_CLOAK_STEALTH_ARGS", True))
+    extra_args: tuple[str, ...] = field(default_factory=lambda: tuple(_env_args("PAGEMAP_CLOAK_EXTRA_ARGS")))
+    persistent_profile: bool = field(default_factory=lambda: _env_bool("PAGEMAP_CLOAK_PERSISTENT", False))
+    profile_root: str = field(
+        default_factory=lambda: os.environ.get("PAGEMAP_CLOAK_PROFILE_ROOT", "~/.pagemap/cloak-profiles")
+    )
+    pagemap_js_stealth: bool = field(default_factory=lambda: _env_bool("PAGEMAP_STEALTH_ENABLED", False))
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,70 +187,17 @@ def _is_browser_dead_error(exc: Exception) -> bool:
     return any(p in msg for p in _BROWSER_DEAD_PATTERNS)
 
 
-# ── Chromium auto-install ─────────────────────────────────────────
+def cloak_launch_args(config: BrowserConfig) -> list[str]:
+    """Return PageMap's extra Chromium args passed through CloakBrowser.
 
-_chromium_install_attempted = False
-_AUTO_INSTALL_TIMEOUT = 300  # seconds — Chromium ~140MB download
-
-
-async def _auto_install_chromium() -> bool:
-    """Run ``playwright install chromium`` once per process.
-
-    Returns True if install succeeded, False otherwise.
-    stdout/stderr are captured to avoid polluting the MCP STDIO stream.
-    """
-    global _chromium_install_attempted  # noqa: PLW0603
-    if _chromium_install_attempted:
-        return False
-    _chromium_install_attempted = True
-
-    logger.info("Chromium not found — running 'playwright install chromium' …")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "playwright",
-            "install",
-            "chromium",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_AUTO_INSTALL_TIMEOUT)
-        if proc.returncode == 0:
-            logger.info("Chromium installed successfully")
-            return True
-        logger.warning(
-            "playwright install chromium failed (rc=%d): %s",
-            proc.returncode,
-            stderr.decode(errors="replace")[:500],
-        )
-        return False
-    except TimeoutError:
-        logger.warning("Chromium install timed out after %ds", _AUTO_INSTALL_TIMEOUT)
-        return False
-    except Exception:
-        logger.warning("Chromium auto-install failed", exc_info=True)
-        return False
-
-
-def chromium_launch_args(config: BrowserConfig) -> list[str]:
-    """Return hardened Chromium launch arguments.
-
-    Shared by both ``BrowserSession`` and ``BrowserPool`` to avoid
-    duplicating the argument list (DRY).
-
-    When ``PAGEMAP_CONTAINER_MODE=1`` (set by docker-compose / k8s), adds
-    ``--no-sandbox`` because gVisor provides the outer sandbox.
+    CloakBrowser supplies the source-level fingerprint and automation-hiding
+    flags. These args preserve PageMap's network, telemetry, and dialog
+    hardening without disabling Cloak's native browser features.
     """
     args = [
-        "--disable-blink-features=AutomationControlled",
-        f"--lang={config.locale}",
-        "--disable-extensions",
-        "--disable-plugins",
         "--disable-dev-shm-usage",
         "--disable-background-networking",
         "--disable-sync",
-        "--disable-gpu",
         "--no-first-run",
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
         "--disable-features=ServiceWorker,WebRtcHideLocalIpsWithMdns",
@@ -204,18 +211,79 @@ def chromium_launch_args(config: BrowserConfig) -> list[str]:
         "--noerrdialogs",
         "--disable-prompt-on-repost",
     ]
-    # In container mode (gVisor/k8s), Chromium sandbox is redundant — gVisor
-    # provides the outer sandbox.  --no-sandbox is *required* for non-root
-    # execution inside containers with seccomp + gVisor.
-    if os.environ.get("PAGEMAP_CONTAINER_MODE") == "1":
-        args.append("--no-sandbox")
+    args.extend(config.extra_args)
+    if config.proxy and not any(arg.startswith("--fingerprint-webrtc-ip") for arg in args):
+        args.append("--fingerprint-webrtc-ip=auto")
     return args
 
 
-_JS_BUNDLE_DIR = Path(__file__).resolve().parent.parent / "data" / "js"
+# Backward-compatible name for older tests/imports.
+chromium_launch_args = cloak_launch_args
 
-# Feature flag: stealth defenses (default ON)
-_STEALTH_ENABLED = os.environ.get("PAGEMAP_STEALTH_ENABLED", "1") == "1"
+
+def _cloak_launch_kwargs(config: BrowserConfig) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {
+        "headless": config.headless,
+        "proxy": config.proxy,
+        "args": cloak_launch_args(config),
+        "stealth_args": config.stealth_args,
+        "timezone": config.timezone,
+        "locale": config.cloak_locale if config.cloak_locale is not None else (None if config.geoip else config.locale),
+        "geoip": config.geoip,
+        "backend": config.cloak_backend,
+        "humanize": config.humanize,
+        "human_preset": config.human_preset,
+        "human_config": config.human_config,
+        "extension_paths": list(config.extension_paths) or None,
+    }
+    return kwargs
+
+
+def _cloak_import_error() -> BrowserError:
+    return BrowserError(
+        "CloakBrowser is required for this fork. Install dependencies with: "
+        "pip install 'cloakbrowser[geoip,patchright]>=0.3.31,<0.4'"
+    )
+
+
+async def launch_cloak_browser(config: BrowserConfig) -> Browser:
+    """Launch a shared CloakBrowser browser and return a Playwright Browser."""
+    try:
+        from cloakbrowser import launch_async
+    except ModuleNotFoundError as exc:
+        raise _cloak_import_error() from exc
+    return await launch_async(**_cloak_launch_kwargs(config))
+
+
+async def launch_cloak_persistent_context(config: BrowserConfig, user_data_dir: str | Path) -> BrowserContext:
+    """Launch a CloakBrowser persistent context."""
+    try:
+        from cloakbrowser import launch_persistent_context_async
+    except ModuleNotFoundError as exc:
+        raise _cloak_import_error() from exc
+
+    kwargs = _cloak_launch_kwargs(config)
+    kwargs.update(
+        {
+            "user_agent": config.user_agent,
+            "viewport": {"width": config.viewport_width, "height": config.viewport_height},
+        }
+    )
+    return await launch_persistent_context_async(user_data_dir, **kwargs)
+
+
+async def _auto_install_chromium() -> bool:
+    """Deprecated compatibility shim.
+
+    This fork uses CloakBrowser's binary installer instead of Playwright
+    Chromium. Runtime launch calls let CloakBrowser download/cache its binary
+    or use ``CLOAKBROWSER_BINARY_PATH``.
+    """
+    logger.warning("_auto_install_chromium() is deprecated; CloakBrowser manages its own binary")
+    return False
+
+
+_JS_BUNDLE_DIR = Path(__file__).resolve().parent.parent / "data" / "js"
 
 
 @lru_cache(maxsize=4)
@@ -234,7 +302,7 @@ class BrowserSession:
 
     def __init__(self, config: BrowserConfig | None = None):
         self.config = config or BrowserConfig()
-        self._playwright: Playwright | None = None
+        self._playwright: object | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._page: Page | None = None
@@ -246,6 +314,7 @@ class BrowserSession:
         self._scanner_cdp_session: CDPSession | None = None
         self._scanner_script_id: str | None = None
         self._scanner_context_id: int | None = None
+        self._persistent_context: bool = False
 
     @property
     def page(self) -> Page:
@@ -269,7 +338,7 @@ class BrowserSession:
     async def is_alive(self, timeout: float = 5.0) -> bool:
         """Check if the browser process is responsive (2-stage health check)."""
         # Stage 1: synchronous connection check (Playwright API)
-        if self._browser is None or not self._browser.is_connected():
+        if self._browser is not None and not self._browser.is_connected():
             return False
         # Stage 2: async page responsiveness check
         if self._page is None:
@@ -281,41 +350,19 @@ class BrowserSession:
             return False
 
     def _chromium_launch_args(self) -> list[str]:
-        """Return hardened Chromium launch arguments."""
-        return chromium_launch_args(self.config)
+        """Return PageMap's extra CloakBrowser Chromium launch arguments."""
+        return cloak_launch_args(self.config)
 
     async def _launch_browser(self) -> None:
-        """Launch Chromium, auto-installing on first 'executable not found' error."""
-        args = self._chromium_launch_args()
-        try:
-            self._browser = await self._playwright.chromium.launch(
-                headless=self.config.headless,
-                args=args,
-            )
-        except Exception as exc:
-            if "executable doesn't exist" in str(exc).lower():
-                if await _auto_install_chromium():
-                    self._browser = await self._playwright.chromium.launch(
-                        headless=self.config.headless,
-                        args=args,
-                    )
-                else:
-                    raise BrowserError(
-                        "Chromium is not installed and auto-install failed. Please run: playwright install chromium"
-                    ) from exc
-            else:
-                raise
+        """Launch a shared CloakBrowser browser."""
+        self._browser = await launch_cloak_browser(self.config)
 
     async def _create_context(self, browser: Browser) -> None:
         """Create BrowserContext + Page + event handlers on given browser."""
         # D1: isolation verified — accept_downloads=False, service_workers="block",
         # permissions=[] ensure each context is sandboxed.
-        self._context = await browser.new_context(
-            viewport={
-                "width": self.config.viewport_width,
-                "height": self.config.viewport_height,
-            },
-            locale=self.config.locale,
+        context_kwargs: dict[str, Any] = dict(
+            viewport={"width": self.config.viewport_width, "height": self.config.viewport_height},
             user_agent=self.config.user_agent,
             # S3: Block ServiceWorker registration (prevents SSRF route guard bypass)
             service_workers="block",
@@ -326,6 +373,14 @@ class BrowserSession:
             # Default Accept-Language (overridden per-URL in navigate())
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
+        context_locale = self.config.cloak_locale or (None if self.config.geoip else self.config.locale)
+        if context_locale:
+            context_kwargs["locale"] = context_locale
+        self._context = await browser.new_context(**context_kwargs)
+        await self._prepare_context()
+
+    async def _prepare_context(self) -> None:
+        """Install handlers/scripts/routes and create the active Page."""
         # Auto-handle JS dialogs (alert/confirm/prompt/beforeunload)
         self._context.on("dialog", self._on_dialog)
         # Handle popups/new tabs: auto-track for consume_new_page()
@@ -333,6 +388,12 @@ class BrowserSession:
 
         # Stealth: main world, all frames (before page creation)
         await self._install_stealth()
+
+        # Persistent contexts may come with a default blank page. Create the
+        # managed page after init scripts so every navigated page gets them.
+        for page in list(self._context.pages):
+            with suppress(Exception):
+                await page.close()
 
         self._page = await self._context.new_page()
 
@@ -344,7 +405,9 @@ class BrowserSession:
 
     async def start(self) -> None:
         """Launch browser and create initial page."""
-        self._playwright = await async_playwright().start()
+        if self.config.persistent_profile:
+            await self.start_persistent("standalone")
+            return
         await self._launch_browser()
         await self._create_context(self._browser)
         logger.info("Browser session started (headless=%s)", self.config.headless)
@@ -359,6 +422,18 @@ class BrowserSession:
         self._browser = browser
         await self._create_context(browser)
         logger.info("Browser session started from pool (headless=%s)", self.config.headless)
+
+    async def start_persistent(self, session_id: str) -> None:
+        """Start a session using a CloakBrowser persistent profile."""
+        safe_session_id = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in session_id)[:80]
+        profile_dir = Path(self.config.profile_root).expanduser() / (safe_session_id or "default")
+        profile_dir.parent.mkdir(parents=True, exist_ok=True)
+        self._persistent_context = True
+        self._owns_browser = True
+        self._context = await launch_cloak_persistent_context(self.config, profile_dir)
+        self._browser = getattr(self._context, "browser", None)
+        await self._prepare_context()
+        logger.info("Persistent CloakBrowser session started (profile=%s)", profile_dir)
 
     async def _install_scheme_block_route(self) -> None:
         """Block dangerous URL schemes at context level (covers all pages).
@@ -385,7 +460,7 @@ class BrowserSession:
 
     async def _install_stealth(self) -> None:
         """Stealth defenses — main world, all frames."""
-        if not _STEALTH_ENABLED:
+        if not self.config.pagemap_js_stealth:
             return
         stealth_js = _load_js_bundle("stealth_bundle.js")
         if not stealth_js:
@@ -559,16 +634,19 @@ class BrowserSession:
         self._pending_dialogs = []
         self._pending_new_page = None
 
-        if self._owns_browser:
+        if self._persistent_context:
+            # CloakBrowser patches persistent context.close() to also close the
+            # backing browser and Playwright instance.
+            self._browser = None
+            self._playwright = None
+            self._persistent_context = False
+        elif self._owns_browser:
             # Standalone mode: close browser + playwright
             if self._browser:
                 with suppress(Exception):
                     await self._browser.close()
                 self._browser = None
-            if self._playwright:
-                with suppress(Exception):
-                    await self._playwright.stop()
-                self._playwright = None
+            self._playwright = None
         else:
             # Pool mode: release reference only, pool owns the browser
             self._browser = None
@@ -878,7 +956,10 @@ class BrowserSession:
         Uses parameterized evaluate (not f-string) for injection safety.
         Returns scroll position after scrolling.
         """
-        await self.page.evaluate("([dx, dy]) => window.scrollBy(dx, dy)", [delta_x, delta_y])
+        if self.config.humanize:
+            await self.page.mouse.wheel(delta_x, delta_y)
+        else:
+            await self.page.evaluate("([dx, dy]) => window.scrollBy(dx, dy)", [delta_x, delta_y])
         await self.wait_for_dom_settle(max_ms=1500)
         return await self.page.evaluate(_SCROLL_POSITION_JS)
 

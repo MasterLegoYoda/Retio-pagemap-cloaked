@@ -4,12 +4,10 @@ Tests BrowserConfig defaults, security launch args, CDP AX tree conversion,
 property guards, and S3 browser hardening. Does not require a running browser.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import pagemap.server.browser_session as _bs_module
 from pagemap.browser_session import (
     BLOCKED_URL_SCHEMES,
     DEFAULT_LOCALE,
@@ -17,6 +15,7 @@ from pagemap.browser_session import (
     DEFAULT_VIEWPORT,
     BrowserConfig,
     BrowserSession,
+    _DOM_SETTLE_JS,
     _auto_install_chromium,
     _cdp_ax_nodes_to_tree,
 )
@@ -53,6 +52,14 @@ class TestBrowserConfig:
         cfg = BrowserConfig()
         assert cfg.wait_strategy == "hybrid"
         assert cfg.networkidle_budget_ms == 6000
+
+    def test_cloak_defaults(self):
+        cfg = BrowserConfig()
+        assert cfg.stealth_args is True
+        assert cfg.humanize is False
+        assert cfg.human_preset == "default"
+        assert cfg.persistent_profile is False
+        assert cfg.pagemap_js_stealth is False
 
     def test_default_settle_quiet_ms(self):
         cfg = BrowserConfig()
@@ -298,7 +305,7 @@ class TestCdpAxNodesToTree:
 
 
 def _build_mock_chain():
-    """Build a full mock chain: async_playwright → browser → context → page → route."""
+    """Build a full mock chain: Cloak launch → browser → context → page → route."""
     mock_page = AsyncMock()
     mock_page.route = AsyncMock()
 
@@ -306,6 +313,7 @@ def _build_mock_chain():
     mock_context.new_page = AsyncMock(return_value=mock_page)
     mock_context.route = AsyncMock()
     mock_context.on = MagicMock()
+    mock_context.pages = []
 
     mock_browser = AsyncMock()
     mock_browser.new_context = AsyncMock(return_value=mock_context)
@@ -328,11 +336,11 @@ class TestBrowserLaunchArgs:
     @pytest.fixture(autouse=True)
     def _setup(self):
         self.mock_pw_cm, self.mock_chromium, self.mock_browser, self.mock_context, self.mock_page = _build_mock_chain()
+        self.session = BrowserSession()
 
     def _get_launch_args(self):
-        """Extract the args list passed to chromium.launch()."""
-        call_kwargs = self.mock_chromium.launch.call_args
-        return call_kwargs.kwargs.get("args", call_kwargs[1].get("args", []))
+        """Extract the extra args passed through CloakBrowser."""
+        return self.session._chromium_launch_args()
 
     def _get_context_kwargs(self):
         """Extract kwargs passed to browser.new_context()."""
@@ -340,22 +348,19 @@ class TestBrowserLaunchArgs:
 
     async def test_popup_blocking_arg_removed(self):
         """--block-new-web-contents must NOT be present (popups handled by context.on('page'))."""
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         assert "--block-new-web-contents" not in self._get_launch_args()
 
     async def test_webrtc_ip_leak_prevention(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in self._get_launch_args()
 
     async def test_disable_features_single_flag(self):
         """--disable-features must be a single arg to avoid last-wins behavior."""
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         args = self._get_launch_args()
         disable_features = [a for a in args if a.startswith("--disable-features=")]
         assert len(disable_features) == 1, "Multiple --disable-features flags found (last wins!)"
@@ -363,15 +368,13 @@ class TestBrowserLaunchArgs:
         assert "WebRtcHideLocalIpsWithMdns" in disable_features[0]
 
     async def test_deny_permission_prompts(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         assert "--deny-permission-prompts" in self._get_launch_args()
 
     async def test_telemetry_suppression_args(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         args = self._get_launch_args()
         for flag in (
             "--disable-breakpad",
@@ -383,42 +386,36 @@ class TestBrowserLaunchArgs:
             assert flag in args, f"Missing telemetry suppression flag: {flag}"
 
     async def test_external_intent_blocking(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         assert "--disable-external-intent-requests" in self._get_launch_args()
 
     async def test_dialog_suppression_args(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         args = self._get_launch_args()
         assert "--noerrdialogs" in args
         assert "--disable-prompt-on-repost" in args
 
     async def test_no_sandbox_not_present(self):
         """--no-sandbox is a security downgrade and must never be included."""
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         assert "--no-sandbox" not in self._get_launch_args()
 
     async def test_context_service_workers_blocked(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         assert self._get_context_kwargs()["service_workers"] == "block"
 
     async def test_context_permissions_empty(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         assert self._get_context_kwargs()["permissions"] == []
 
     async def test_context_downloads_disabled(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
-            session = BrowserSession()
-            await session.start()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
+            await self.session.start()
         assert self._get_context_kwargs()["accept_downloads"] is False
 
 
@@ -558,7 +555,7 @@ class TestContextHandlerRegistration:
         self.mock_pw_cm, self.mock_chromium, self.mock_browser, self.mock_context, self.mock_page = _build_mock_chain()
 
     async def test_dialog_and_page_handlers_registered(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
             session = BrowserSession()
             await session.start()
 
@@ -568,7 +565,7 @@ class TestContextHandlerRegistration:
         assert "page" in event_names
 
     async def test_dialog_handler_is_session_method(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
             session = BrowserSession()
             await session.start()
 
@@ -577,7 +574,7 @@ class TestContextHandlerRegistration:
         assert dialog_calls[0][0][1] == session._on_dialog
 
     async def test_page_handler_is_session_method(self):
-        with patch("pagemap.server.browser_session.async_playwright", return_value=self.mock_pw_cm):
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=self.mock_browser)):
             session = BrowserSession()
             await session.start()
 
@@ -695,136 +692,41 @@ class TestScrollMethods:
         assert "100" not in js_code
         assert "0" not in js_code or js_code == "([dx, dy]) => window.scrollBy(dx, dy)"
 
+    async def test_humanized_scroll_uses_mouse_wheel(self):
+        session = BrowserSession.__new__(BrowserSession)
+        session.config = BrowserConfig(humanize=True)
+        mock_page = AsyncMock()
+        mock_page.evaluate = AsyncMock(return_value={})
+        session._page = mock_page
 
-# ── Chromium Auto-Install ───────────────────────────────────────
+        await session.scroll(delta_x=10, delta_y=300)
+
+        mock_page.mouse.wheel.assert_awaited_once_with(10, 300)
+        first_call = mock_page.evaluate.call_args_list[0]
+        assert first_call[0][0] == _DOM_SETTLE_JS
 
 
-class TestAutoInstallChromium:
-    """Tests for _auto_install_chromium() and start() auto-install integration."""
+# ── CloakBrowser launch integration ─────────────────────────────
 
-    @pytest.fixture(autouse=True)
-    def _reset_flag(self):
-        """Reset the module-level install flag before each test."""
-        _bs_module._chromium_install_attempted = False
-        yield
-        _bs_module._chromium_install_attempted = False
 
-    async def test_subprocess_called_correctly(self):
-        """Verify the correct playwright install command is invoked."""
-        import sys
+class TestCloakBrowserLaunch:
+    """Tests for CloakBrowser launch integration."""
 
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
-        mock_proc.returncode = 0
+    async def test_auto_install_shim_returns_false(self):
+        assert await _auto_install_chromium() is False
 
-        with patch(
-            "pagemap.server.browser_session.asyncio.create_subprocess_exec", return_value=mock_proc
-        ) as mock_exec:
-            result = await _auto_install_chromium()
-
-        assert result is True
-        mock_exec.assert_called_once_with(
-            sys.executable,
-            "-m",
-            "playwright",
-            "install",
-            "chromium",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-    async def test_only_runs_once(self):
-        """Second call should return False without running subprocess."""
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
-        mock_proc.returncode = 0
-
-        with patch(
-            "pagemap.server.browser_session.asyncio.create_subprocess_exec", return_value=mock_proc
-        ) as mock_exec:
-            first = await _auto_install_chromium()
-            second = await _auto_install_chromium()
-
-        assert first is True
-        assert second is False
-        assert mock_exec.call_count == 1
-
-    async def test_returns_false_on_nonzero_rc(self):
-        """Non-zero return code should yield False."""
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"error"))
-        mock_proc.returncode = 1
-
-        with patch("pagemap.server.browser_session.asyncio.create_subprocess_exec", return_value=mock_proc):
-            result = await _auto_install_chromium()
-
-        assert result is False
-
-    async def test_returns_false_on_timeout(self):
-        """TimeoutError should be caught and return False."""
-        with patch(
-            "pagemap.server.browser_session.asyncio.create_subprocess_exec",
-            side_effect=TimeoutError,
-        ):
-            result = await _auto_install_chromium()
-
-        assert result is False
-
-    async def test_start_triggers_auto_install_on_missing_chromium(self):
-        """start() should auto-install and retry launch when executable missing."""
-        mock_pw_cm, mock_chromium, mock_browser, mock_context, mock_page = _build_mock_chain()
-
-        # First launch raises "executable doesn't exist", second succeeds
-        mock_chromium.launch = AsyncMock(
-            side_effect=[
-                Exception("Executable doesn't exist at /path/chromium"),
-                mock_browser,
-            ]
-        )
-
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"ok", b""))
-        mock_proc.returncode = 0
-
-        with (
-            patch("pagemap.server.browser_session.async_playwright", return_value=mock_pw_cm),
-            patch("pagemap.server.browser_session.asyncio.create_subprocess_exec", return_value=mock_proc),
-        ):
+    async def test_start_uses_cloak_launcher(self):
+        _, _, mock_browser, _, _ = _build_mock_chain()
+        with patch("pagemap.server.browser_session.launch_cloak_browser", new=AsyncMock(return_value=mock_browser)) as mock_launch:
             session = BrowserSession()
             await session.start()
+        mock_launch.assert_awaited_once()
 
-        # chromium.launch called twice: fail then succeed
-        assert mock_chromium.launch.call_count == 2
-
-    async def test_start_raises_on_install_failure(self):
-        """start() should raise BrowserError when auto-install fails."""
-        mock_pw_cm, mock_chromium, mock_browser, mock_context, mock_page = _build_mock_chain()
-
-        mock_chromium.launch = AsyncMock(
-            side_effect=Exception("Executable doesn't exist at /path/chromium"),
-        )
-
-        mock_proc = AsyncMock()
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"fail"))
-        mock_proc.returncode = 1
-
-        with (
-            patch("pagemap.server.browser_session.async_playwright", return_value=mock_pw_cm),
-            patch("pagemap.server.browser_session.asyncio.create_subprocess_exec", return_value=mock_proc),
+    async def test_start_propagates_cloak_error(self):
+        with patch(
+            "pagemap.server.browser_session.launch_cloak_browser",
+            new=AsyncMock(side_effect=BrowserError("cloak missing")),
         ):
             session = BrowserSession()
-            with pytest.raises(BrowserError, match="auto-install failed"):
-                await session.start()
-
-    async def test_start_propagates_non_chromium_error(self):
-        """start() should not intercept errors unrelated to missing chromium."""
-        mock_pw_cm, mock_chromium, mock_browser, mock_context, mock_page = _build_mock_chain()
-
-        mock_chromium.launch = AsyncMock(
-            side_effect=Exception("some other playwright error"),
-        )
-
-        with patch("pagemap.server.browser_session.async_playwright", return_value=mock_pw_cm):
-            session = BrowserSession()
-            with pytest.raises(Exception, match="some other playwright error"):
+            with pytest.raises(BrowserError, match="cloak missing"):
                 await session.start()
