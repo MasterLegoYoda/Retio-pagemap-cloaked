@@ -151,6 +151,32 @@ docker run -p 8000:8000 retio1001/pagemap --transport http
 
 Multi-architecture images (amd64/arm64) available on [Docker Hub](https://hub.docker.com/r/retio1001/pagemap) and GitHub Container Registry.
 
+### Pi (no MCP)
+
+A token-efficient [Pi](https://pi.dev) extension lives at
+`.pi/extensions/pagemap/`. It registers four read-only tools
+(`pagemap_search`, `pagemap_fetch`, `pagemap_batch_fetch`,
+`pagemap_sessions`) that shell out to the `pagemap` CLI. No MCP
+server, no 18-tool context blast.
+
+```bash
+make pi-install                  # npm install + symlink to ~/.pi/agent/extensions/pagemap
+make pi-uninstall                # remove the symlink
+# or, without make:
+bash scripts/install-pi-extension.sh
+bash scripts/uninstall-pi-extension.sh
+```
+
+After `pi-install`, restart Pi (or run `/reload` in the TUI). The
+four tools should appear alongside the built-ins.
+
+The interactive tools (`get_page_map` / `execute_action` / `fill_form` /
+screenshots / multi-tab) are MCP-only and are not exposed by the
+extension. Use the MCP server for those flows.
+
+See `.pi/extensions/pagemap/README.md` and `skills/web-fetch/SKILL.md`
+for full details.
+
 ---
 
 ## Python API
