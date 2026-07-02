@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/server/url_validation.py
+# hypothesis_version: 6.151.9
+
+[2.0, 255, 4294967295, '.', '0', '0.0.0.0/8', '01234567', '0x', '10.0.0.0/8', '100.100.100.200', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16', '169.254.169.254', '169.254.170.2', '172.16.0.0/12', '192.168.0.0/16', '::1/128', '::ffff:0:0/96', 'ALLOWED_URL_SCHEMES', 'BLOCKED_HOSTS', 'Invalid URL format.', '_LOCAL_NETWORKS', '_PRIVATE_NETWORKS', '_is_local_ip', '_normalize_ip', '_resolve_dns', '_validate_url', 'fc00::/7', 'fd00:ec2::/32', 'fd00:ec2::254', 'fe80::/10', 'http', 'https', 'localhost', 'metadata.goog']

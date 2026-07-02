@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/listing_engine.py
+# hypothesis_version: 6.151.9
+
+[100, '@graph', '@type', 'BreadcrumbList', 'item', 'itemListElement', 'name', 'position', 'totalProducts', 'total_products']

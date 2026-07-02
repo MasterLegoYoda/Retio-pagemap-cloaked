@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/preprocessing/preprocess.py
+# hypothesis_version: 6.151.9
+
+['count_tokens', 'count_tokens_approx', 'semantic_html', 'strip_html']

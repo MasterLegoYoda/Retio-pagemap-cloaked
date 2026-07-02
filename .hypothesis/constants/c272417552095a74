@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/option_analyzer.py
+# hypothesis_version: 6.151.9
+
+['><', '>[^<]{1,30}<', 'all_sold_out', 'color', 'color_required', 'colour', 'couleur', 'farbe', 'größe', 'options_required', 'other', 'out_of_stock', 'size', 'size_required', 'sold_out', 'taille', 'カラー', 'サイズ', '尺码', '颜色', '사이즈', '색상', '컬러']

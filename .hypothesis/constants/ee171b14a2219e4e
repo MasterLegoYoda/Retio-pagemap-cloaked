@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/diagnostics/__init__.py
+# hypothesis_version: 6.151.9
+
+[0.0, '1', 'ENABLE_DIAGNOSTICS', '_force_cache_evict', 'action', 'age_verification', 'akamai', 'angular', 'antibot', 'blocked_info', 'bot_blocked', 'challenge_visible', 'cloudflare', 'confidence', 'detail', 'detected', 'element_blocked', 'element_hidden', 'empty_results', 'error_page', 'framework', 'generic', 'has_main_content', 'has_skeleton', 'hcaptcha', 'http_status', 'hydrated', 'login_required', 'nextjs', 'nuxt', 'out_of_stock', 'overall_confidence', 'page_state', 'params', 'priority', 'provider', 'pruning_confidence', 'react', 'reason', 'recaptcha', 'region_restricted', 'removal_rate', 'signals', 'spa_status', 'state', 'state_changed', 'suggested_actions', 'svelte', 'timeout_exceeded', 'true', 'turnstile', 'unknown', 'url', 'vue', 'yes']

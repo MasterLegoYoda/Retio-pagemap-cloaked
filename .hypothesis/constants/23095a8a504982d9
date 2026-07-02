@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/__init__.py
+# hypothesis_version: 6.151.9
+
+['1', 'ENABLE_ECOMMERCE', 'age_verification', 'barrier_type', 'cards', 'cart', 'confidence', 'cookie_consent', 'has_brand', 'has_cards', 'has_max_price', 'has_product', 'js_api', 'listing', 'login_required', 'match_confidence', 'matched', 'name', 'other', 'page_type', 'popup_overlay', 'product_detail', 'region_restricted', 'search_results', 'target_match', 'target_name_len', 'true', 'unknown', 'url', 'yes']

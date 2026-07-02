@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/flow_state_machine.py
+# hypothesis_version: 6.151.9
+
+['No ecom result', 'Previous step failed', 'add_to_cart_ref', 'atc_ref', 'auto_dismiss', 'auto_dismissible', 'barrier', 'barrier_check', 'barrier_resolved', 'barrier_type', 'buy_now_ref', 'card_count', 'cards', 'cart', 'cart_added', 'cart_ready', 'discovery', 'discovery_analyzed', 'error', 'final_state', 'flow_failed', 'flow_state', 'has_options', 'init', 'name', 'options', 'price', 'product', 'product_analyzed', 'reached_cart', 'reached_product', 'site_id', 'step', 'step_details', 'steps', 'success', 'successes', 'unknown']

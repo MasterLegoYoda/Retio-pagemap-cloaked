@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/diagnostics/spa_loader.py
+# hypothesis_version: 6.151.9
+
+[0.75, 0.85, 100, 'angular', 'contentLength', 'nextjs', 'nuxt', 'react', 'skeletonCount', 'svelte', 'vue']

@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/script_filter.py
+# hypothesis_version: 6.151.9
+
+['FilterResult', 'Script', 'ScriptProfile', 'classify_char', 'detect_page_script', 'filter_lines', 'profile_text']

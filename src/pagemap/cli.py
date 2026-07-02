@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -472,6 +473,410 @@ def _is_browser_binary_missing(e: Exception) -> bool:
     """Check if the error is due to missing browser binaries."""
     msg = str(e).lower()
     return "executable doesn't exist" in msg or "cloakbrowser" in msg and "install" in msg
+
+
+# ── Web fetch / search CLI commands ──────────────────────────────────
+
+
+def _print_web_error(prefix: str, exc: Exception) -> None:
+    """Print a web_fetch CLI error in a single line, fall back to problem details."""
+    msg = str(exc).strip()
+    if msg:
+        print(f"{prefix}: {msg}", file=sys.stderr)
+    else:
+        print(prefix, file=sys.stderr)
+
+
+def cmd_search(args: argparse.Namespace) -> None:
+    """``pagemap search`` — run a web search and print the results."""
+    from pagemap.web_fetch.errors import ProviderError
+
+    try:
+        asyncio.run(_cmd_search_async(args))
+    except KeyboardInterrupt:
+        raise
+    except ProviderError as exc:
+        _print_web_error("Error", exc)
+        sys.exit(1)
+    except Exception as exc:  # nosec B110 — CLI surface
+        if _is_browser_binary_missing(exc):
+            print(
+                "CloakBrowser binary not installed.\nRun:  cloakbrowser install\nThen: pagemap search <query>",
+                file=sys.stderr,
+            )
+        else:
+            _print_web_error("Error", exc)
+        sys.exit(1)
+
+
+async def _cmd_search_async(args: argparse.Namespace) -> None:
+    from pagemap.web_fetch import WebSearchResult
+    from pagemap.web_fetch.providers import get_provider
+    from pagemap.web_fetch.providers.base import ProviderContext
+    from pagemap.web_fetch.sessions import resolve_session_arg
+
+    from .server.browser_session import BrowserSession
+    from .server.web_fetch_bridge import attach_browser_to_session
+
+    provider_name = args.provider
+    session_arg = getattr(args, "session", None)
+    max_results = max(1, min(args.max_results or 10, 20))
+    domain_filter = args.domain or None
+
+    # Lazy: only spin up a browser when the user asked for one. Most
+    # search providers can work over stdlib HTTP without Chromium.
+    need_browser = bool(args.use_browser)
+
+    manager_mod = __import__("pagemap.web_fetch", fromlist=["SessionManager"])
+    manager = manager_mod.SessionManager()
+
+    sess, _created = resolve_session_arg(session_arg, manager=manager)
+
+    if need_browser:
+        # Validate that the user isn't asking for SSRF on the search engine URL.
+        # (The provider itself decides the actual endpoint.)
+        # Reuse the existing PageMap browser launcher.
+        browser = BrowserSession()
+        try:
+            await browser.start()
+        except Exception as exc:  # nosec B110
+            print(f"Error: failed to launch browser: {exc}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            attach_browser_to_session(sess, browser)
+            prov = get_provider(provider_name)
+            ctx = ProviderContext(
+                session_id=sess.id,
+                history=sess.history + [{"page": browser.page}],
+                min_delay_ms=0,
+            )
+            results = await prov.search(
+                args.query,
+                max_results=max_results,
+                recency=args.recency,
+                domain_filter=domain_filter,
+                ctx=ctx,
+            )
+        finally:
+            await browser.stop()
+    else:
+        prov = get_provider(provider_name)
+        ctx = ProviderContext(
+            session_id=sess.id,
+            history=sess.history,
+            min_delay_ms=0,
+        )
+        results = await prov.search(
+            args.query,
+            max_results=max_results,
+            recency=args.recency,
+            domain_filter=domain_filter,
+            ctx=ctx,
+        )
+
+    sess.record("search", query=args.query, provider=provider_name, count=len(results))
+
+    if args.format == "json":
+        payload = {
+            "query": args.query,
+            "provider": provider_name,
+            "session": sess.id,
+            "result_count": len(results),
+            "results": [
+                WebSearchResult(title=r.get("title", ""), url=r.get("url", ""), snippet=r.get("snippet", ""), source=provider_name).model_dump()
+                for r in results
+            ],
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    # Default: markdown.
+    print(f"# Search: {args.query}")
+    print(f"_provider={provider_name} session={sess.id} results={len(results)}_")
+    print()
+    for i, r in enumerate(results, start=1):
+        title = r.get("title", "(no title)")
+        url = r.get("url", "")
+        snippet = (r.get("snippet") or "").strip()
+        print(f"{i}. [{title}]({url})")
+        if snippet:
+            print(f"   {snippet}")
+
+
+def cmd_fetch(args: argparse.Namespace) -> None:
+    """``pagemap fetch`` — fetch a URL and print the extracted content."""
+    try:
+        asyncio.run(_cmd_fetch_async(args))
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:  # nosec B110
+        if _is_browser_binary_missing(exc):
+            print(
+                "CloakBrowser binary not installed.\nRun:  cloakbrowser install\nThen: pagemap fetch <url>",
+                file=sys.stderr,
+            )
+        else:
+            _print_web_error("Error", exc)
+        sys.exit(1)
+
+
+async def _cmd_fetch_async(args: argparse.Namespace) -> None:
+    from pagemap.web_fetch import FetchFormat
+    from pagemap.web_fetch.extract import extract as _extract
+    from pagemap.web_fetch.models import WebFetchResult
+    from pagemap.web_fetch.sessions import resolve_session_arg
+
+    from .server.browser_session import BrowserSession
+    from .server.url_validation import _validate_url
+    from .server.web_fetch_bridge import attach_browser_to_session
+
+    mode = (args.mode or "browser").lower()
+    fmt = FetchFormat(args.format or "markdown")
+    max_chars = args.max_chars or 50_000
+
+    if mode == "fast":
+        print(
+            "Error: mode='fast' is not yet implemented. Use mode='browser' for now.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # SSRF pre-check.
+    err = _validate_url(args.url)
+    if err:
+        print(f"Error: {err}", file=sys.stderr)
+        sys.exit(1)
+
+    manager_mod = __import__("pagemap.web_fetch", fromlist=["SessionManager"])
+    manager = manager_mod.SessionManager()
+    sess, _created = resolve_session_arg(getattr(args, "session", None), manager=manager)
+
+    if mode == "browser":
+        browser = BrowserSession()
+        try:
+            await browser.start()
+        except Exception as exc:  # nosec B110
+            print(f"Error: failed to launch browser: {exc}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            attach_browser_to_session(sess, browser)
+            page = browser.page
+            response = await page.goto(args.url, wait_until="domcontentloaded", timeout=30000)
+            status = response.status if response is not None else None
+            content_type = (
+                response.headers.get("content-type") if response is not None else None
+            )
+            final_url = page.url
+            post_err = _validate_url(final_url)
+            if post_err:
+                print(f"Error: redirect to blocked URL — {post_err}", file=sys.stderr)
+                sys.exit(1)
+            title = await page.title()
+            raw_html = await page.content()
+        finally:
+            await browser.stop()
+    else:
+        print(f"Error: unknown mode '{mode}'", file=sys.stderr)
+        sys.exit(1)
+
+    extracted = _extract(
+        raw_html=raw_html or "",
+        url=final_url or args.url,
+        fmt=fmt,
+        max_chars=max_chars,
+    )
+    sess.record(
+        "fetch",
+        url=args.url,
+        final_url=final_url,
+        mode=mode,
+        format=fmt.value,
+        truncated=extracted.truncated,
+        chars=extracted.content_length,
+    )
+
+    if args.format == "json" or args.format_output == "json":
+        result = WebFetchResult(
+            url=args.url,
+            final_url=final_url or args.url,
+            title=extracted.title or title,
+            content_type=content_type,
+            status=status,
+            session=sess.id,
+            session_created=_created,
+            format=fmt.value,
+            mode=mode,
+            content=extracted.content,
+            content_length=extracted.content_length,
+            truncated=extracted.truncated,
+            full_output_path=extracted.full_output_path,
+            warnings=extracted.warnings,
+        )
+        print(json.dumps(result.model_dump(), ensure_ascii=False, indent=2))
+        return
+
+    if extracted.title:
+        print(f"# {extracted.title}")
+        print()
+    print(extracted.content)
+    if extracted.truncated and extracted.full_output_path:
+        print(
+            f"\n[Truncated to {extracted.content_length} chars. Full output: {extracted.full_output_path}]",
+            file=sys.stderr,
+        )
+
+
+def cmd_batch_fetch(args: argparse.Namespace) -> None:
+    """``pagemap batch-fetch`` — fetch multiple URLs in parallel."""
+    try:
+        asyncio.run(_cmd_batch_fetch_async(args))
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:  # nosec B110
+        _print_web_error("Error", exc)
+        sys.exit(1)
+
+
+async def _cmd_batch_fetch_async(args: argparse.Namespace) -> None:
+    from pagemap.web_fetch import FetchFormat
+    from pagemap.web_fetch.extract import extract as _extract
+    from pagemap.web_fetch.sessions import resolve_session_arg
+
+    from .server.browser_session import BrowserSession
+    from .server.url_validation import _validate_url
+
+    fmt = FetchFormat(args.format or "markdown")
+    max_chars = args.max_chars or 50_000
+    mode = (args.mode or "browser").lower()
+    if mode == "fast":
+        print("Error: mode='fast' is not yet implemented.", file=sys.stderr)
+        sys.exit(1)
+
+    manager_mod = __import__("pagemap.web_fetch", fromlist=["SessionManager"])
+    manager = manager_mod.SessionManager()
+    sess, _created = resolve_session_arg(getattr(args, "session", None), manager=manager)
+
+    if args.output:
+        try:
+            out = Path(args.output)
+            out.parent.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:  # nosec B110
+            print(f"Error: bad output path: {exc}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        out = None
+
+    concurrency = max(1, min(args.max_concurrency or 5, 5))
+    sem = asyncio.Semaphore(concurrency)
+
+    browser = BrowserSession()
+    try:
+        await browser.start()
+    except Exception as exc:  # nosec B110
+        print(f"Error: failed to launch browser: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    async def _one(u: str) -> tuple[str, bool, str, str | None]:
+        async with sem:
+            if not u.lower().startswith(("http://", "https://")):
+                return u, False, "url must start with http:// or https://", None
+            err = _validate_url(u)
+            if err:
+                return u, False, err, None
+            try:
+                page = browser.page
+                await page.goto(u, wait_until="domcontentloaded", timeout=30000)
+                post_err = _validate_url(page.url)
+                if post_err:
+                    return u, False, f"redirect to blocked URL: {post_err}", None
+                raw_html = await page.content()
+            except Exception as exc:  # nosec B110
+                return u, False, str(exc), None
+            extracted = _extract(raw_html=raw_html, url=page.url or u, fmt=fmt, max_chars=max_chars)
+            return u, True, extracted.content, extracted.title
+
+    try:
+        results = await asyncio.gather(*[_one(u) for u in args.urls])
+    finally:
+        await browser.stop()
+
+    succeeded = sum(1 for _, ok, *_ in results if ok)
+    failed = len(results) - succeeded
+    sess.record("batch_fetch", urls=list(args.urls), succeeded=succeeded, failed=failed)
+
+    if args.format_output == "json":
+        payload = {
+            "total": len(args.urls),
+            "succeeded": succeeded,
+            "failed": failed,
+            "session": sess.id,
+            "results": [
+                {"url": u, "success": ok, "title": title, "content": content if ok else None, "error": (content if not ok else None)}
+                for (u, ok, content, title) in results
+            ],
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    if out is not None:
+        # Write one file per URL.
+        for u, ok, content, title in results:
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", u)[:80]
+            path = out / f"{safe}.md"
+            path.write_text(
+                f"# {title or u}\n\n{content}\n" if ok else f"# ERROR: {u}\n\n{content}\n",
+                encoding="utf-8",
+        )
+        print(
+            f"{succeeded} succeeded, {failed} failed. Wrote to {out}",
+            file=sys.stderr,
+        )
+        return
+
+    for u, ok, content, title in results:
+        print(f"--- {u} {'(ok)' if ok else '(failed)'} ---")
+        if title:
+            print(f"# {title}")
+        print(content)
+        print()
+
+
+def cmd_sessions(args: argparse.Namespace) -> None:
+    """``pagemap sessions list`` / ``pagemap sessions close`` — manage web sessions."""
+    from pagemap.web_fetch import SessionManager
+
+    if args.sessions_command == "list":
+        manager = SessionManager()
+        sessions = manager.list_sessions()
+        if args.format == "json":
+            print(
+                json.dumps(
+                    {"sessions": [s.info().model_dump() for s in sessions]},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            if not sessions:
+                print("No active web sessions.")
+                return
+            for s in sessions:
+                tag = " (default)" if s.is_default else ""
+                print(f"{s.id}{tag}  history={len(s.history)}  last_used={s.last_used:.0f}")
+    elif args.sessions_command == "close":
+        manager = SessionManager()
+        if args.session_id == "default":
+            manager.reset_default()
+            print("Reset default session.")
+        else:
+            ok = manager.close(args.session_id)
+            if not ok:
+                print(f"Error: session '{args.session_id}' not found.", file=sys.stderr)
+                sys.exit(1)
+            print(f"Closed session '{args.session_id}'.")
+    else:
+        print(f"Unknown subcommand: {args.sessions_command}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_build(args: argparse.Namespace) -> None:
@@ -1506,6 +1911,180 @@ examples:
         "setup": cmd_setup,
         "auth": cmd_auth,
     }
+
+    # ── Web fetch / search ────────────────────────────────────────
+    _search_epilog = """\
+examples:
+  %(prog)s "python type hints"                       Search DuckDuckGo and print results
+  %(prog)s "rust async" --max-results 5 --format json
+  %(prog)s "react 19 docs" --session new:docs       Use a named session for continuity"""
+
+    p_search = subparsers.add_parser(
+        "search",
+        help="Web search (DuckDuckGo, Brave, Bing, Google, SearXNG, Exa, Tavily, Firecrawl)",
+        epilog=_search_epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_search.add_argument("query", type=str, help="Search query")
+    p_search.add_argument(
+        "--provider",
+        type=str,
+        default="duckduckgo",
+        help="Search provider (default: duckduckgo)",
+    )
+    p_search.add_argument(
+        "--max-results",
+        type=int,
+        default=10,
+        help="Maximum results (1-20, default 10)",
+    )
+    p_search.add_argument(
+        "--recency",
+        type=str,
+        choices=["day", "week", "month", "year"],
+        default=None,
+        help="Time-bucket hint (provider-dependent)",
+    )
+    p_search.add_argument(
+        "--domain",
+        action="append",
+        default=None,
+        help="Domain filter (repeatable; prefix with '-' to exclude)",
+    )
+    p_search.add_argument(
+        "--session",
+        type=str,
+        default=None,
+        help="Session id; 'new' creates a fresh one, 'new:<name>' names it",
+    )
+    p_search.add_argument(
+        "--use-browser",
+        action="store_true",
+        help="Render the search engine page through CloakBrowser (more natural footprint)",
+    )
+    p_search.add_argument(
+        "--format",
+        type=str,
+        choices=["markdown", "json"],
+        default="markdown",
+        help="Output format (default: markdown)",
+    )
+    commands["search"] = cmd_search
+
+    _fetch_epilog = """\
+examples:
+  %(prog)s https://example.com                         Print extracted markdown to stdout
+  %(prog)s https://example.com --format text           Plain text output
+  %(prog)s https://example.com --format json -o out.json
+  %(prog)s https://example.com --session new:docs      Reuse a named session"""
+
+    p_fetch = subparsers.add_parser(
+        "fetch",
+        help="Fetch a URL and extract content (markdown|text|html|json)",
+        epilog=_fetch_epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_fetch.add_argument("url", type=str, help="URL to fetch")
+    p_fetch.add_argument(
+        "--mode",
+        type=str,
+        choices=["browser", "fast"],
+        default="browser",
+        help="Fetch mode (default: browser)",
+    )
+    p_fetch.add_argument(
+        "--format",
+        type=str,
+        choices=["markdown", "text", "html", "json"],
+        default="markdown",
+        help="Output format (default: markdown)",
+    )
+    p_fetch.add_argument(
+        "--max-chars",
+        type=int,
+        default=50_000,
+        help="Truncation limit (default 50000)",
+    )
+    p_fetch.add_argument(
+        "--session",
+        type=str,
+        default=None,
+        help="Session id; 'new' creates a fresh one, 'new:<name>' names it",
+    )
+    p_fetch.add_argument(
+        "--format-output",
+        type=str,
+        choices=["auto", "json"],
+        default="auto",
+        help="Wrap result as JSON instead of content (default: auto)",
+    )
+    commands["fetch"] = cmd_fetch
+
+    p_batch_fetch = subparsers.add_parser(
+        "batch-fetch",
+        help="Fetch multiple URLs in parallel",
+    )
+    p_batch_fetch.add_argument("urls", nargs="+", help="URLs to fetch")
+    p_batch_fetch.add_argument(
+        "--mode",
+        type=str,
+        choices=["browser", "fast"],
+        default="browser",
+    )
+    p_batch_fetch.add_argument(
+        "--format",
+        type=str,
+        choices=["markdown", "text", "html"],
+        default="markdown",
+    )
+    p_batch_fetch.add_argument(
+        "--max-chars",
+        type=int,
+        default=50_000,
+    )
+    p_batch_fetch.add_argument(
+        "--max-concurrency",
+        type=int,
+        default=5,
+    )
+    p_batch_fetch.add_argument(
+        "--session",
+        type=str,
+        default=None,
+    )
+    p_batch_fetch.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default=None,
+        help="Output directory (one file per URL)",
+    )
+    p_batch_fetch.add_argument(
+        "--format-output",
+        type=str,
+        choices=["auto", "json"],
+        default="auto",
+    )
+    commands["batch-fetch"] = cmd_batch_fetch
+
+    p_sessions = subparsers.add_parser(
+        "sessions",
+        help="Manage web sessions (list, close)",
+    )
+    p_sessions_sub = p_sessions.add_subparsers(dest="sessions_command", required=True)
+    p_sessions_list = p_sessions_sub.add_parser("list", help="List active web sessions")
+    p_sessions_list.add_argument(
+        "--format", type=str, choices=["text", "json"], default="text"
+    )
+    p_sessions_close = p_sessions_sub.add_parser("close", help="Close a web session")
+    p_sessions_close.add_argument(
+        "session_id",
+        type=str,
+        nargs="?",
+        default="default",
+        help="Session id to close (default: reset the default session)",
+    )
+    commands["sessions"] = cmd_sessions
 
     # ── Credits management (S8) ─────────────────────────────────
     if _has_management_db():

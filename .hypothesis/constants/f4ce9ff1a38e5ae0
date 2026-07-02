@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/pruning/compressor.py
+# hypothesis_version: 6.151.9
+
+[1.0, '/', '>\n<', '>\\s+<', '[ \\t]+', '\\1', '\\n\\s*\\n+', 'after_len', 'alt', 'aria-label', 'aria-labelledby', 'before_len', 'body', 'content', 'data-section', 'datetime', 'href', 'html', 'itemprop', 'itemscope', 'itemtype', 'name', 'property', 'role', 'src', 'title', 'type', 'value']

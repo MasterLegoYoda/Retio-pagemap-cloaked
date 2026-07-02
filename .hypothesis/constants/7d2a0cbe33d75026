@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/pipeline_timer.py
+# hypothesis_version: 6.151.9
+
+[1000000.0, '_current', '_stages', '_start_ns', 'completed_stages', 'content_refresh', 'detection', 'error', 'fingerprint', 'hint', 'ms', 'navigation', 'pruning', 'stage', 'timed_out_at', 'timed_out_stage_ms', 'timeout', 'total_ms', 'unknown']

@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/ecommerce/login_detector.py
+# hypothesis_version: 6.151.9
+
+['AgeGateInfo', 'LoginFormInfo', 'detect_age_gate', 'detect_login_wall', 'detect_region_block']

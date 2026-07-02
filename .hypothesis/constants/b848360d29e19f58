@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/diagnostics/auto_threshold.py
+# hypothesis_version: 6.151.9
+
+[0.1, 0.15, 0.3, 0.5, 0.8, 3.0, 3600.0, 100, 500, 1500, 'budget_adjustment', 'effective_budget', 'ema', 'sample_count', 'states', 'tracked_keys']

@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/page_classifier.py
+# hypothesis_version: 6.151.9
+
+['ANTI_BOT_KEYWORDS', 'ClassificationResult', 'SIGNAL_REGISTRY', 'SignalDef', 'THRESHOLDS', 'classify_page']

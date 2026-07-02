@@ -165,16 +165,16 @@ class TestModelDump:
 
 
 class TestToolOutputSchemas:
-    def test_thirteen_entries(self):
-        assert len(TOOL_OUTPUT_SCHEMAS) == 13
+    def test_eighteen_entries(self):
+        assert len(TOOL_OUTPUT_SCHEMAS) == 18
 
     def test_screenshot_is_none(self):
         assert TOOL_OUTPUT_SCHEMAS["take_screenshot"] is None
 
-    def test_eight_models_plus_five_none(self):
+    def test_thirteen_models_plus_five_none(self):
         models = [v for v in TOOL_OUTPUT_SCHEMAS.values() if v is not None]
         nones = [v for v in TOOL_OUTPUT_SCHEMAS.values() if v is None]
-        assert len(models) == 8
+        assert len(models) == 13
         assert len(nones) == 5  # take_screenshot + 4 multi-tab tools
 
 

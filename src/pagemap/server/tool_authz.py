@@ -46,6 +46,12 @@ TOOL_RISK_STATIC: dict[str, RiskTier] = {
     "navigate_back": RiskTier.LOW,
     "scroll_page": RiskTier.LOW,
     "wait_for": RiskTier.LOW,
+    # Web fetch / search
+    "web_search": RiskTier.LOW,  # read-only; external site, but read-only
+    "web_fetch": RiskTier.LOW,  # read-only; external site, but read-only
+    "batch_web_fetch": RiskTier.MEDIUM,  # multiple external sites in one call
+    "web_list_sessions": RiskTier.LOW,
+    "web_close_session": RiskTier.MEDIUM,  # mutates session registry
 }
 
 # Tools that return JSON responses (advisory injected as key, not trailing text)

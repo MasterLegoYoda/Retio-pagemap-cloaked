@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/server/browser_pool.py
+# hypothesis_version: 6.151.9
+
+[30.0, 60.0, 1800.0, 'pagemap-pool-reaper']

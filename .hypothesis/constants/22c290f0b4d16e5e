@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/server/barrier_dismisser.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.5, 1.0, 2.0, 3.0, 200, 1000, 3000, 'accept', 'age_verification', 'barrier_type', 'click dismiss failed', 'click failed', 'cookie_consent', 'cookie_policy', 'elapsed_ms', 'error', 'js_api', 'method', 'no barrier', 'no dismiss target', 'none', 'popup_overlay', 'provider']

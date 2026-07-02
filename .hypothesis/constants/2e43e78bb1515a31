@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/site_hints.py
+# hypothesis_version: 6.151.9
+
+[0.7, 0.8, 0.85, 0.95, 'KRW', 'Site hints error: %s', 'amazon.', 'amazon_currency', 'amazon_price', 'coupang.com', 'coupang_currency', 'coupang_price', 'currency', 'domain', 'field', 'hint_id', 'listing', 'manual', 'price_text', 'product_detail', 'search_results', 'url']

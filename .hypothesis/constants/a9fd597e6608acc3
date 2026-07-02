@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/_card_extractor.py
+# hypothesis_version: 6.151.9
+
+[200, '@graph', '@type', 'IndividualProduct', 'ItemList', 'Product', '\\s+', 'aggregateRating', 'brand', 'click', 'currency', 'highPrice', 'image', 'item', 'itemListElement', 'items', 'lowPrice', 'name', 'offers', 'price', 'priceCurrency', 'priceSpecification', 'price_text', 'ratingCount', 'ratingValue', 'reviewCount', 'toggle', 'url']

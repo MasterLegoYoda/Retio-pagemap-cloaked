@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/diagnostics/auto_remap.py
+# hypothesis_version: 6.151.9
+
+['MAX_AUTO_REMAPS', 'maybe_auto_remap']

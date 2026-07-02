@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/diagnostics/antibot_detector.py
+# hypothesis_version: 6.151.9
+
+['detect_antibot', 'update_session_state']

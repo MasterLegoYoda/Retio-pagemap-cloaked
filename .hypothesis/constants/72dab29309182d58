@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/cache.py
+# hypothesis_version: 6.151.9
+
+[0.0, 90.0, '&', 'A', 'B', 'C', 'Cache eviction: %s', 'Cache invalidate_all', 'barrier_dismissed', 'bot_blocked', 'browser_dead', 'dom_content', 'dom_major', 'fill_form', 'navigation', 'new_tab', 'pagemap.cache', 'scroll', 'ssrf_blocked', 'timeout', 'wait_for']

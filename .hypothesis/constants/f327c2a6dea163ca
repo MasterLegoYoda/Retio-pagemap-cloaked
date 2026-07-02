@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/popup_detector.py
+# hypothesis_version: 6.151.9
+
+[0.65, 0.7, 0.8, 0.85, 5000, 'alertdialog', 'app', 'app-banner', 'dialog', 'exit', 'exit-intent', 'generic', 'newsletter', 'promo', 'subscribe']

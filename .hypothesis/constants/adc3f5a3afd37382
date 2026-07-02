@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/diagnostics/auto_remap.py
+# hypothesis_version: 6.151.9
+
+[200, '_auto_remap_count', 'action', 'auto_remap', 'cache', 'confidence', 'diagnosis', 'error', 'failure_type', 'page_map', 'params', 'priority', 'reason', 'ref', 'refs_expired', 'status', 'success', 'suggested_actions']

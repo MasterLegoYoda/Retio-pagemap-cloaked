@@ -172,6 +172,9 @@ _IMPL_NAMES = [
     "_fill_form_impl",
     "_wait_for_impl",
     "_batch_get_page_map_impl",
+    "_web_search_impl",
+    "_web_fetch_impl",
+    "_batch_web_fetch_impl",
 ]
 
 
@@ -184,7 +187,7 @@ def _get_server_ast() -> ast.Module:
 class TestImplArchitecturalInvariants:
     """AST + inspect based architectural guards for Phase α."""
 
-    def test_exactly_nine_impl_functions_exist(self):
+    def test_exactly_twelve_impl_functions_exist(self):
         tree = _get_server_ast()
         impl_funcs = [
             node.name
@@ -192,7 +195,7 @@ class TestImplArchitecturalInvariants:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.endswith("_impl")
         ]
         assert sorted(impl_funcs) == sorted(_IMPL_NAMES), (
-            f"Expected exactly 9 _impl functions. Found: {sorted(impl_funcs)}"
+            f"Expected exactly 12 _impl functions. Found: {sorted(impl_funcs)}"
         )
 
     @pytest.mark.parametrize("name", _IMPL_NAMES)

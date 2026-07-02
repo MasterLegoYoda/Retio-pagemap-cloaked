@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/diagnostics/pruning_confidence.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9, 1.0, 100.0, 'aom_filter_stats', 'article', 'chunk_count_selected', 'chunk_count_total', 'has_main_content', 'in_main', 'landing', 'no_main_content', 'product_detail', 'pruned_token_count', 'raw_token_count', 'removed_nodes', 'selected_chunks', 'token_reduction_pct', 'total_nodes']

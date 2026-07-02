@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/ecommerce/popup_detector.py
+# hypothesis_version: 6.151.9
+
+['PopupOverlayResult', 'detect_popup_overlay']

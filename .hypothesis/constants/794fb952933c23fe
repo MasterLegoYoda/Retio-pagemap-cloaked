@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/login_detector.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.2, 0.3, 0.4, 0.5, 0.8, 0.85, 1.0, '18歳以上です', '18세 이상입니다', '19세 이상입니다', '2fa_detected', '\\brequired\\b', 'apple', 'click_through', 'confirm age', 'date_entry', 'date_picker_detected', 'email', 'enter', 'facebook', 'field_type', 'github', 'google', 'i am 18 or older', 'i am of legal age', 'i am over 18', 'i am over 21', "i'm over 18", 'ich bin volljährig', 'ich bin über 18', "j'ai plus de 18 ans", 'ja, ich bin über 18', 'je suis majeur', 'kakao', 'line', 'log in', 'login', 'login_form_tag', 'login_modal', 'mixed', 'name', 'naver', 'password', 'password_field', 'required', 'sign in', 'social_only', 'twitter', 'username', 'wechat', 'yes, i am over 18', 'はい、18歳以上です', 'ログイン', '年齢確認', '我已成年', '我已满18岁', '登录', '确认年龄', '나이 확인', '로그인', '성인입니다', '연령 확인', '예, 성인입니다']

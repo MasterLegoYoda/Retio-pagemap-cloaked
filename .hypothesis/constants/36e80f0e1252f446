@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/pruned_context_builder.py
+# hypothesis_version: 6.151.9
+
+['CompressorContext', 'DEFAULT_MAX_TOKENS', 'PRICE_PATTERN', 'RATING_PATTERN', 'build_pruned_context']

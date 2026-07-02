@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/config_registry.py
+# hypothesis_version: 6.151.9
+
+[100, 'article', 'blocked', 'checkout', 'dashboard', 'documentation', 'error', 'form', 'help_faq', 'jsonld_weights', 'landing', 'listing', 'login', 'news', 'product_detail', 'search_results', 'settings', 'thresholds', 'type_priority', 'video']

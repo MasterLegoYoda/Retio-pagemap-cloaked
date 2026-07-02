@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/pruning/tier_processor.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.15, 0.4, 0.75, 0.8, 1.0, 200, '...', '<[^>]+>', '<li\\b[^>]*>.*?</li>', '<tr\\b[^>]*>.*?</tr>', '<ul>', 'A', 'B', 'C', 'Form', 'List', 'Media', 'Table', 'Text Block', 'aria-label', 'budget-drop']

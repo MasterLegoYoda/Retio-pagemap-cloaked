@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/browser_session.py
+# hypothesis_version: 6.151.9
+
+['BLOCKED_URL_SCHEMES', 'BOT_USER_AGENT', 'BrowserConfig', 'BrowserSession', 'DEFAULT_LOCALE', 'DEFAULT_USER_AGENT', 'DEFAULT_VIEWPORT', 'DialogInfo', 'NavigationResult', '_DOM_SETTLE_JS', '_MAX_DIALOG_BUFFER', '_SCROLL_POSITION_JS', 'chromium_launch_args', 'cloak_launch_args', 'create_session', 'launch_cloak_browser']

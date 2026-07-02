@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/server/tool_authz.py
+# hypothesis_version: 6.151.9
+
+['RiskTier', 'TOOL_RISK_STATIC', 'active_url', 'authz_advisory', 'batch_get_page_map', 'batch_web_fetch', 'classify_tool', 'emit_authz_log', 'emit_authz_telem', 'execute_action', 'fill_form', 'get_page_map', 'get_page_state', 'high', 'low', 'medium', 'navigate_back', 'pagemap.server', 'request_id', 'risk_tier', 'scroll_page', 'session_id', 'take_screenshot', 'tool', 'tool_authz_gate', 'url', 'wait_for', 'web_close_session', 'web_fetch', 'web_list_sessions', 'web_search']

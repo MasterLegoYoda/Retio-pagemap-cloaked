@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/web_fetch/providers/__init__.py
+# hypothesis_version: 6.151.9
+
+['PROVIDERS', 'SearchProvider', 'available_providers', 'get_provider', 'list_provider_names', 'register_provider']

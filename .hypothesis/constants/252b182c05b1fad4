@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/interactive_detector.py
+# hypothesis_version: 6.151.9
+
+['AFFORDANCE_MAP', 'INTERACTIVE_ROLES', 'LANDMARK_ROLES', 'REGION_MAP', 'SKIP_ROLES', 'detect_all']

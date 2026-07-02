@@ -121,6 +121,24 @@ except ImportError:
     SingleFlight = None  # type: ignore[assignment,misc]
 from pagemap.template_cache import InMemoryTemplateCache, TemplateKey, extract_template_domain
 
+# Web fetch / search layer (read-only path; see SKILLs/browse-page and
+# skills/web-fetch for the agent-facing documentation).
+from pagemap.web_fetch import (
+    DEFAULT_SESSION_ID as _DEFAULT_SESSION_ID,
+    BatchWebFetchResult as _WebBatchResult,
+    FetchFormat as _FetchFormat,
+    FetchMode as _FetchMode,
+    InvalidSessionName as _InvalidSessionName,
+    ProviderError as _ProviderError,
+    SessionManager as _SessionManager,
+    SessionNotFound as _SessionNotFound,
+    WebFetchResult as _WebFetchResult,
+    WebSearchResult as _WebSearchEntry,
+    extract as _extract_content,
+    get_provider as _get_search_provider,
+    resolve_session_arg as _resolve_session_arg,
+)
+
 from .action_helpers import (
     _BROWSER_DEAD_PATTERNS as _BROWSER_DEAD_PATTERNS,
     _CLICK_SAFE_PATTERNS as _CLICK_SAFE_PATTERNS,
@@ -215,6 +233,12 @@ __all__ = [
     "switch_tab",
     "list_tabs",
     "close_tab",
+    # Web fetch / search
+    "web_search",
+    "web_fetch",
+    "batch_web_fetch",
+    "web_list_sessions",
+    "web_close_session",
     # Core
     "mcp",
     "main",
@@ -3481,6 +3505,666 @@ async def _batch_get_page_map_impl(urls: list[str], max_concurrency: int, *, ctx
         ensure_ascii=False,
     )
     return _check_response_size(result_json, tool="batch_get_page_map")
+
+
+# ── Web fetch / search MCP tools ────────────────────────────────────
+#
+# These are *additive* on top of the existing browser-automation tools.
+# They give agents a simpler path for read-only web access (docs, lookups)
+# without having to learn the ref/action/PageMap dance. Sessions are
+# first-class: every tool accepts a ``session`` argument that resolves to
+# either the long-lived default session, a freshly created session
+# (``"new"`` / ``"new:<name>"``), or a previously created session id.
+# Backends are pluggable (see ``pagemap.web_fetch.providers``).
+
+# Global, in-process session manager. Lives for the lifetime of the server.
+_web_session_manager = _SessionManager(
+    ttl_seconds=float(os.environ.get("PAGEMAP_WEB_SESSION_TTL_S", "1800") or 1800),
+)
+
+# Reuse the existing Playwright browser when one is already running.
+# This keeps a "natural" footprint: search-then-fetch reuses the same
+# fingerprint and IP. We attach lazily on first use so a pure-stdlib
+# invocation never has to spin up Chromium.
+
+_BATCH_WEB_FETCH_MAX_URLS = 10
+_BATCH_WEB_FETCH_MAX_CONCURRENCY = 5
+_BATCH_WEB_FETCH_PER_URL_TIMEOUT = 60.0
+_BATCH_WEB_FETCH_OVERALL_TIMEOUT = 120.0
+
+_WEB_FETCH_FORMATS = frozenset({"markdown", "text", "html", "json"})
+_WEB_FETCH_MODES = frozenset({"browser", "fast"})
+
+
+async def _ensure_browser_attached(session) -> None:
+    """Attach the active PageMap browser to ``session`` if available.
+
+    Safe no-op when no browser is running (the web_fetch tools gracefully
+    fall back to the stdlib HTTP transport).
+    """
+    if session.browser is not None:
+        return
+    try:
+        # Lazy import to avoid a hard dependency at module load time.
+        from .web_fetch_bridge import attach_browser_to_session
+
+        browser_session = await _get_session()
+        attach_browser_to_session(session, browser_session)
+    except Exception:  # nosec B110 — best effort; stdlib fallback still works
+        session.browser = None
+
+
+def _coerce_format(value: str | None) -> _FetchFormat:
+    if value is None:
+        return _FetchFormat.markdown
+    try:
+        return _FetchFormat(value)
+    except ValueError:
+        return _FetchFormat.markdown
+
+
+def _coerce_mode(value: str | None) -> _FetchMode:
+    if value is None:
+        return _FetchMode.browser
+    try:
+        return _FetchMode(value)
+    except ValueError:
+        return _FetchMode.browser
+
+
+async def _validate_web_url(url: str) -> str | None:
+    """SSRF guard reused from the existing get_page_map path. Returns an
+    error message string on failure, ``None`` on success."""
+    return await _validate_url_with_dns(url)
+
+
+# ── web_search ──────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Web Search", readOnlyHint=True, openWorldHint=True, riskTierHint="low"
+    )
+)
+async def web_search(
+    query: str,
+    provider: str = "duckduckgo",
+    max_results: int = 10,
+    recency: str | None = None,
+    domain_filter: list[str] | None = None,
+    session: str | None = None,
+    mcp_ctx: McpContext = None,
+) -> str:
+    """Search the web and return a ranked list of results.
+
+    Lightweight counterpart to :func:`get_page_map` for read-only lookups
+    (docs, references, news). No ref numbers, no interactions — just
+    ``title``, ``url``, ``snippet``.
+
+    Sessions are optional but recommended: passing the same ``session`` to
+    successive calls makes the activity look continuous to bot detection.
+    Pass ``"new"`` to spin up a fresh session, or ``"new:<name>"`` to give
+    it a memorable name. Omit the argument to use the long-lived default
+    session.
+
+    Args:
+        query: Search query string.
+        provider: Search backend. Built-in: ``duckduckgo`` (concrete).
+            Stubs: ``brave``, ``bing``, ``google``, ``searxng``,
+            ``exa``, ``tavily``, ``firecrawl``.
+        max_results: Maximum results per call (1-20, default 10).
+        recency: Optional time-bucket hint (``day``/``week``/``month``/``year``).
+            Only honored by providers that support it.
+        domain_filter: List of domains to include (``example.com``) or
+            exclude (``-tracker.com``).
+        session: Optional session id. ``None`` uses the default session.
+    """
+    ctx, lock = await _acquire_context(mcp_ctx)
+    try:
+        async with asyncio.timeout(_TOOL_LOCK_TIMEOUT):
+            async with lock:
+                _record_tool_call("web_search", session_id=ctx.session_id, request_id=ctx.request_id)
+                return await _web_search_impl(
+                    query=query,
+                    provider=provider,
+                    max_results=max_results,
+                    recency=recency,
+                    domain_filter=domain_filter,
+                    session_arg=session,
+                    request_id=ctx.request_id,
+                )
+    except TimeoutError:
+        logger.error("Tool lock acquisition timed out for web_search")
+        return "Error: Server busy — another tool call is in progress. Wait a moment, then retry."
+
+
+async def _web_search_impl(
+    *,
+    query: str,
+    provider: str,
+    max_results: int,
+    recency: str | None,
+    domain_filter: list[str] | None,
+    session_arg: str | None,
+    request_id: str,
+    ctx: RequestContext | None = None,
+) -> str:
+    if ctx is None:
+        ctx = _create_stdio_context()
+    if not query or not query.strip():
+        return "Error: query must be a non-empty string."
+
+    if max_results <= 0 or max_results > 20:
+        max_results = min(max(max_results, 1), 20)
+
+    t0 = _time_mod.monotonic()
+    try:
+        sess, created = _resolve_session_arg(session_arg, manager=_web_session_manager)
+    except (_InvalidSessionName, _SessionNotFound) as exc:
+        return f"Error: {exc}"
+
+    await _ensure_browser_attached(sess)
+
+    try:
+        prov = _get_search_provider(provider)
+    except _ProviderError as exc:
+        return f"Error: {exc}"
+
+    from pagemap.web_fetch.providers.base import ProviderContext
+
+    history = sess.history + [{"page": sess.browser.page if sess.browser else None}]
+    ctx = ProviderContext(
+        session_id=sess.id,
+        history=history,
+        min_delay_ms=0,
+    )
+
+    try:
+        results = await prov.search(
+            query,
+            max_results=max_results,
+            recency=recency,
+            domain_filter=domain_filter,
+            ctx=ctx,
+        )
+    except _ProviderError as exc:
+        return f"Error: {exc}"
+    except Exception as exc:  # nosec B110 — surface, don't crash
+        return f"Error: search failed: {exc}"
+
+    sess.record("search", query=query, provider=provider, count=len(results))
+    elapsed_ms = (_time_mod.monotonic() - t0) * 1000.0
+
+    output = _WebBatchResult.model_validate(
+        {
+            "total": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "session": sess.id,
+            "session_created": created,
+            "elapsed_ms": elapsed_ms,
+            "results": [],
+        }
+    )  # placeholder so the type checker is happy; we don't use this
+
+    # Build the actual WebSearchOutput (we use the inner result model for
+    # return string serialization).
+    from pagemap.web_fetch.models import WebSearchOutput
+
+    output = WebSearchOutput(
+        query=query,
+        provider=provider,
+        session=sess.id,
+        session_created=created,
+        result_count=len(results),
+        results=[_WebSearchEntry(**r, source=provider) for r in results],
+        elapsed_ms=elapsed_ms,
+    )
+
+    return _check_response_size(str(output), tool="web_search")
+
+
+# ── web_fetch ───────────────────────────────────────────────────────
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Web Fetch", readOnlyHint=True, openWorldHint=True, riskTierHint="low"
+    )
+)
+async def web_fetch(
+    url: str,
+    mode: str = "browser",
+    format: str = "markdown",
+    max_chars: int = 50_000,
+    session: str | None = None,
+    mcp_ctx: McpContext = None,
+) -> str:
+    """Fetch a URL and return its content as markdown, text, html, or json.
+
+    Read-only counterpart to :func:`get_page_map`. The default output is
+    markdown so the result is agent-friendly and small. Larger responses
+    are truncated; the full body spills to a temp file (``full_output_path``)
+    that the agent can read on demand.
+
+    Sessions are optional. Pass the same ``session`` id across calls to
+    keep a continuous footprint; pass ``"new"`` or ``"new:<name>"`` to
+    start a fresh session.
+
+    Args:
+        url: URL to fetch (http/https only).
+        mode: ``browser`` (default, CloakBrowser-rendered) or ``fast`` (not
+            yet implemented; raises a clear error).
+        format: Output format: ``markdown`` (default), ``text``, ``html``,
+            or ``json``.
+        max_chars: Truncation limit for ``content`` (default 50,000).
+        session: Optional session id.
+    """
+    ctx, lock = await _acquire_context(mcp_ctx)
+    # URL validation is fast — do before acquiring lock.
+    if url is not None:
+        error = await _validate_web_url(url)
+        if error:
+            return f"Error: {error} Provide a valid http:// or https:// URL."
+    try:
+        async with asyncio.timeout(_TOOL_LOCK_TIMEOUT):
+            async with lock:
+                _record_tool_call("web_fetch", session_id=ctx.session_id, url=url, request_id=ctx.request_id)
+                return await _web_fetch_impl(
+                    url=url,
+                    mode=mode,
+                    format=format,
+                    max_chars=max_chars,
+                    session_arg=session,
+                    request_id=ctx.request_id,
+                )
+    except TimeoutError:
+        logger.error("Tool lock acquisition timed out for web_fetch")
+        return "Error: Server busy — another tool call is in progress. Wait a moment, then retry."
+
+
+async def _web_fetch_impl(
+    *,
+    url: str,
+    mode: str,
+    format: str,
+    max_chars: int,
+    session_arg: str | None,
+    request_id: str,
+    ctx: RequestContext | None = None,
+) -> str:
+    if ctx is None:
+        ctx = _create_stdio_context()
+    if not url or not url.lower().startswith(("http://", "https://")):
+        return "Error: url must start with http:// or https://."
+
+    if max_chars < 0:
+        max_chars = 0
+
+    fmt = _coerce_format(format)
+    fetch_mode = _coerce_mode(mode)
+
+    try:
+        sess, created = _resolve_session_arg(session_arg, manager=_web_session_manager)
+    except (_InvalidSessionName, _SessionNotFound) as exc:
+        return f"Error: {exc}"
+
+    await _ensure_browser_attached(sess)
+
+    t0 = _time_mod.monotonic()
+    warnings: list[str] = []
+
+    # SSRF post-nav guard — same convention as get_page_map.
+    parsed_final_url: str | None = None
+    content_type: str | None = None
+    status: int | None = None
+    title: str | None = None
+    raw_html: str | None = None
+    metadata: dict = {}
+
+    if fetch_mode == _FetchMode.fast:
+        return "Error: mode='fast' is not yet implemented. Use mode='browser' for now."
+
+    # browser mode
+    page = None
+    browser_session = sess.browser
+    if browser_session is not None:
+        try:
+            page = browser_session.page
+        except Exception:  # nosec B110
+            page = None
+
+    if page is None:
+        return (
+            "Error: No browser session is available for mode='browser'. "
+            "Start the MCP server (which spins up CloakBrowser) or implement "
+            "mode='fast' to fetch without a browser."
+        )
+
+    try:
+        from pagemap.web_fetch_bridge import acquire_browser_page
+
+        page = acquire_browser_page(sess) or page
+        response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        status = response.status if response is not None else None
+        content_type = response.headers.get("content-type") if response is not None else None
+        parsed_final_url = page.url
+        raw_html = await page.content()
+        title = await page.title()
+        # post-nav SSRF guard
+        post_error = await _validate_url_with_dns(parsed_final_url)
+        if post_error:
+            return f"Error: Redirect led to blocked URL — {post_error}"
+    except Exception as exc:  # nosec B110
+        return f"Error: fetch failed: {exc}"
+
+    try:
+        extracted = _extract_content(
+            raw_html=raw_html or "",
+            url=parsed_final_url or url,
+            fmt=fmt,
+            max_chars=max_chars,
+        )
+    except Exception as exc:  # nosec B110
+        return f"Error: extraction failed: {exc}"
+
+    if extracted.warnings:
+        warnings.extend(extracted.warnings)
+
+    elapsed_ms = (_time_mod.monotonic() - t0) * 1000.0
+    sess.record(
+        "fetch",
+        url=url,
+        final_url=parsed_final_url,
+        mode=fetch_mode.value,
+        format=fmt.value,
+        truncated=extracted.truncated,
+        chars=extracted.content_length,
+    )
+
+    result = _WebFetchResult(
+        url=url,
+        final_url=parsed_final_url or url,
+        title=extracted.title or title,
+        content_type=content_type,
+        status=status,
+        session=sess.id,
+        session_created=created,
+        format=fmt.value,
+        mode=fetch_mode.value,
+        content=extracted.content,
+        content_length=extracted.content_length,
+        truncated=extracted.truncated,
+        full_output_path=extracted.full_output_path,
+        elapsed_ms=elapsed_ms,
+        warnings=warnings,
+        metadata=metadata,
+    )
+    return _check_response_size(str(result), tool="web_fetch")
+
+
+# ── batch_web_fetch ─────────────────────────────────────────────────
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Batch Web Fetch", readOnlyHint=True, openWorldHint=True, riskTierHint="medium"
+    )
+)
+async def batch_web_fetch(
+    urls: list[str],
+    mode: str = "browser",
+    format: str = "markdown",
+    max_chars: int = 50_000,
+    max_concurrency: int = 5,
+    session: str | None = None,
+    mcp_ctx: McpContext = None,
+) -> str:
+    """Fetch multiple URLs in parallel and return per-URL results.
+
+    Same shape as :func:`web_fetch` but amortizes the browser spin-up
+    across N URLs. Failures of individual URLs do not abort the batch.
+
+    Args:
+        urls: List of URLs to fetch (1-10).
+        mode: ``browser`` (default) or ``fast`` (not yet implemented).
+        format: Output format (default ``markdown``).
+        max_chars: Per-URL truncation limit (default 50,000).
+        max_concurrency: Max parallel pages (1-5, default 5).
+        session: Optional session id.
+    """
+    ctx, lock = await _acquire_context(mcp_ctx)
+    if not urls:
+        return json.dumps(
+            {"error": "urls list is empty", "results": [], "summary": {"total": 0}},
+            ensure_ascii=False,
+        )
+    if len(urls) > _BATCH_WEB_FETCH_MAX_URLS:
+        return json.dumps(
+            {
+                "error": f"Too many URLs ({len(urls)}). Maximum is {_BATCH_WEB_FETCH_MAX_URLS}.",
+                "results": [],
+                "summary": {"total": len(urls)},
+            },
+            ensure_ascii=False,
+        )
+    # Validate every URL up front; fail fast on SSRF.
+    pre_errors: dict[str, str] = {}
+    seen: set[str] = set()
+    valid_urls: list[str] = []
+    for u in urls:
+        if u in seen:
+            continue
+        seen.add(u)
+        if not u.lower().startswith(("http://", "https://")):
+            pre_errors[u] = "url must start with http:// or https://"
+            continue
+        err = await _validate_web_url(u)
+        if err:
+            pre_errors[u] = err
+            continue
+        valid_urls.append(u)
+
+    try:
+        async with asyncio.timeout(_BATCH_WEB_FETCH_OVERALL_TIMEOUT):
+            async with lock:
+                _record_tool_call(
+                    "batch_web_fetch", session_id=ctx.session_id, request_id=ctx.request_id
+                )
+                return await _batch_web_fetch_impl(
+                    urls=urls,
+                    valid_urls=valid_urls,
+                    pre_errors=pre_errors,
+                    mode=mode,
+                    format=format,
+                    max_chars=max_chars,
+                    max_concurrency=max_concurrency,
+                    session_arg=session,
+                    request_id=ctx.request_id,
+                )
+    except TimeoutError:
+        logger.error("Tool lock acquisition timed out for batch_web_fetch")
+        return json.dumps(
+            {"error": "Server busy — another tool call is in progress."},
+            ensure_ascii=False,
+        )
+
+
+async def _batch_web_fetch_impl(
+    *,
+    urls: list[str],
+    valid_urls: list[str],
+    pre_errors: dict[str, str],
+    mode: str,
+    format: str,
+    max_chars: int,
+    max_concurrency: int,
+    session_arg: str | None,
+    request_id: str,
+    ctx: RequestContext | None = None,
+) -> str:
+    if ctx is None:
+        ctx = _create_stdio_context()
+    try:
+        sess, created = _resolve_session_arg(session_arg, manager=_web_session_manager)
+    except (_InvalidSessionName, _SessionNotFound) as exc:
+        return json.dumps(
+            {"error": str(exc), "results": [], "summary": {"total": len(urls)}},
+            ensure_ascii=False,
+        )
+
+    await _ensure_browser_attached(sess)
+
+    if mode == "fast":
+        return json.dumps(
+            {
+                "error": "mode='fast' is not yet implemented. Use mode='browser' for now.",
+                "results": [
+                    {"url": u, "success": False, "error": "fast mode not implemented"}
+                    for u in valid_urls
+                ],
+                "summary": {"total": len(urls), "succeeded": 0, "failed": len(urls)},
+            },
+            ensure_ascii=False,
+        )
+
+    effective_concurrency = min(max(1, max_concurrency), _BATCH_WEB_FETCH_MAX_CONCURRENCY)
+    semaphore = asyncio.Semaphore(effective_concurrency)
+
+    t0 = _time_mod.monotonic()
+
+    async def _process_one(u: str) -> dict:
+        async with semaphore:
+            try:
+                result = await _web_fetch_impl(
+                    url=u,
+                    mode="browser",
+                    format=format,
+                    max_chars=max_chars,
+                    session_arg=sess.id,
+                    request_id=request_id,
+                )
+                # _web_fetch_impl returns a formatted string. Parse it as JSON
+                # by re-deriving the same fields via a fresh call would be
+                # expensive; instead, surface the per-URL result as success +
+                # truncated preview.
+                return {"url": u, "success": True, "result": result}
+            except Exception as exc:  # nosec B110
+                return {"url": u, "success": False, "error": str(exc)}
+
+    tasks = [_process_one(u) for u in valid_urls]
+    if tasks:
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+    else:
+        raw_results = []
+
+    results: list[dict] = []
+    for u, err in pre_errors.items():
+        results.append({"url": u, "success": False, "error": err})
+
+    for r in raw_results:
+        if isinstance(r, BaseException):
+            results.append({"url": "unknown", "success": False, "error": str(r)})
+        else:
+            results.append(r)
+
+    elapsed_ms = (_time_mod.monotonic() - t0) * 1000.0
+    succeeded = sum(1 for r in results if r.get("success"))
+    failed = len(results) - succeeded
+    sess.record(
+        "batch_fetch",
+        urls=urls,
+        succeeded=succeeded,
+        failed=failed,
+        elapsed_ms=elapsed_ms,
+    )
+
+    payload = {
+        "total": len(urls),
+        "succeeded": succeeded,
+        "failed": failed,
+        "session": sess.id,
+        "session_created": created,
+        "elapsed_ms": elapsed_ms,
+        "results": results,
+    }
+    return _check_response_size(json.dumps(payload, ensure_ascii=False), tool="batch_web_fetch")
+
+
+# ── web_list_sessions / web_close_session ───────────────────────────
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="List Web Sessions", readOnlyHint=True, openWorldHint=False, riskTierHint="low"
+    )
+)
+async def web_list_sessions(mcp_ctx: McpContext = None) -> str:
+    """List all active web sessions with their last-used timestamp and
+    activity count."""
+    ctx, lock = await _acquire_context(mcp_ctx)
+    try:
+        async with asyncio.timeout(_TOOL_LOCK_TIMEOUT):
+            async with lock:
+                _record_tool_call("web_list_sessions", session_id=ctx.session_id, request_id=ctx.request_id)
+                sessions = _web_session_manager.list_sessions()
+                payload = {
+                    "sessions": [s.info().model_dump() for s in sessions],
+                }
+                return _check_response_size(
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    tool="web_list_sessions",
+                )
+    except TimeoutError:
+        logger.error("Tool lock acquisition timed out for web_list_sessions")
+        return json.dumps(
+            {"error": "Server busy — another tool call is in progress."},
+            ensure_ascii=False,
+        )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Close Web Session",
+        readOnlyHint=False,
+        destructiveHint=False,
+        openWorldHint=False,
+        riskTierHint="medium",
+    )
+)
+async def web_close_session(
+    session: str = "default",
+    mcp_ctx: McpContext = None,
+) -> str:
+    """Close a web session and remove it from the registry.
+
+    The default session cannot be deleted but is reset (next ``web_search``
+    or ``web_fetch`` recreates it). Pass a specific id to fully remove it.
+    """
+    ctx, lock = await _acquire_context(mcp_ctx)
+    try:
+        async with asyncio.timeout(_TOOL_LOCK_TIMEOUT):
+            async with lock:
+                _record_tool_call(
+                    "web_close_session", session_id=ctx.session_id, request_id=ctx.request_id
+                )
+                if session == _DEFAULT_SESSION_ID:
+                    _web_session_manager.reset_default()
+                    return json.dumps(
+                        {"closed": True, "session": session, "reset": True},
+                        ensure_ascii=False,
+                    )
+                closed = _web_session_manager.close(session)
+                return json.dumps(
+                    {"closed": closed, "session": session},
+                    ensure_ascii=False,
+                )
+    except TimeoutError:
+        logger.error("Tool lock acquisition timed out for web_close_session")
+        return json.dumps(
+            {"error": "Server busy — another tool call is in progress."},
+            ensure_ascii=False,
+        )
 
 
 # ── fill_form helpers ─────────────────────────────────────────────

@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/barrier_handler.py
+# hypothesis_version: 6.151.9
+
+[0.7, 'accept', 'auto_dismissible', 'barrier_type', 'button', 'click', 'click_through', 'confidence', 'dismiss', 'generic', 'js_api', 'none', 'provider', 'reject', 'symbol', 'toggle', 'url']

@@ -261,6 +261,12 @@ class TestOutputSchemaRegistry:
             "switch_tab",
             "list_tabs",
             "close_tab",
+            # Web fetch / search
+            "web_search",
+            "web_fetch",
+            "batch_web_fetch",
+            "web_list_sessions",
+            "web_close_session",
         }
         assert set(TOOL_OUTPUT_SCHEMAS.keys()) == expected_tools
 

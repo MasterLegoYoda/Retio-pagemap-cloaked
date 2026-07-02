@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/server/robots_checker.py
+# hypothesis_version: 6.151.9
+
+[60.0, 300.0, 3600.0, 200, 300, 400, 401, 403, 443, 500, ',', 'Cache-Control', 'User-Agent', 'http', 'https', 'max-age=', 'replace', 'retio-pagemap', 'unknown', 'utf-8']

@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/diagnostics/suggested_actions.py
+# hypothesis_version: 6.151.9
+
+['Dismiss overlay', 'Fill login form', 'Rebuild after wait', 'Refresh refs', 'Retry current page', 'Search alternatives', 'Try alternate URL', 'Try broader search', 'Try different URL', 'Try public page', 'accept_ref', 'direction', 'down', 'execute_action', 'form_fields', 'get_page_map', 'name', 'navigate', 'scroll_page', 'slow_down_requests', 'stealth_tips', 'time', 'wait_for']

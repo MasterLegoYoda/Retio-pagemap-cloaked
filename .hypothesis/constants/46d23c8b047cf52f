@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/cart_engine.py
+# hypothesis_version: 6.151.9
+
+['all_sold_out', 'click', 'out_of_stock', 'ready_to_add', 'select', 'select_options', 'sold_out', 'toggle', 'type', 'unknown']

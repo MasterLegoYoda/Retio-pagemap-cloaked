@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/server/multi_tab.py
+# hypothesis_version: 6.151.9
+
+[1800, 'All tabs closed', '^[a-zA-Z0-9_]{1,30}$', 'active_tab', 'age_seconds', 'closed_tab', 'domain', 'error', 'expires', 'has_page_map', 'httpOnly', 'invalid_name', 'invalid_url', 'is_active', 'max_tabs_reached', 'name', 'ok', 'path', 'sameSite', 'secure', 'status', 'tab_count', 'tab_exists', 'tab_name', 'tab_not_found', 'tabs', 'url', 'value']

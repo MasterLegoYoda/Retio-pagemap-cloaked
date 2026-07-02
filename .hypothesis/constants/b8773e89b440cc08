@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/dom_change_detector.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.2, 0.5, 1.0, 'bodyChildCount', 'contentHash', 'content_changed', 'decreased', 'depthCount', 'depthSum', 'dialog appeared', 'hasDialog', 'increased', 'interactiveCounts', 'interactiveLandmarks', 'landmarkData', 'mainChars', 'major', 'maxDepth', 'minor', 'none', 'repPeriod', 'spaSignals', 'symHalf', 'symMatch', 'title', 'title changed', 'totalChars', 'totalInteractives', 'totalLandmarks', 'visible text changed']

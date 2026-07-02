@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/serializer.py
+# hypothesis_version: 6.151.9
+
+['to_agent_prompt', 'to_agent_prompt_diff', 'to_dict', 'to_json']

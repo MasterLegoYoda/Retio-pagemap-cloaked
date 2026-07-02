@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/pruning/compressor.py
+# hypothesis_version: 6.151.9
+
+['compress_html', 'remerge_chunks']

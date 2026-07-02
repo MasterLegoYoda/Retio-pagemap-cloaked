@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/template_cache.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.3, 86400.0, 'Template evicted: %s', '_pruning_result', 'application/ld+json', 'currentPage', 'itemprop', 'items', 'json_ld', 'json_ld_itemlist', 'listing', 'name', 'og', 'og:', 'p', 'page', 'pageNo', 'pageNum', 'pg', 'pn', 'position', 'property', 'search_results', 'type', 'url', 'www.']

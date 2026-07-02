@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/dom_converters.py
+# hypothesis_version: 6.151.9
+
+['attribute', 'backendDOMNodeId', 'childIds', 'children', 'contents', 'focused', 'labelledby', 'name', 'name_source', 'nodeId', 'properties', 'relatedElement', 'role', 'sources', 'type', 'value']

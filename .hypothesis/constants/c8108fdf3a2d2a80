@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/sanitizer.py
+# hypothesis_version: 6.151.9
+
+[256, 50000, '"', '%Y-%m-%dT%H:%M:%SZ', '&gt;', '&lt;', '&quot;', '<', '>', '[\\1](blocked:\\2)', '[blocked link]', '\\s{2,}']

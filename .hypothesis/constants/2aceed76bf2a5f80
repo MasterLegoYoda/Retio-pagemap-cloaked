@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/delta_serializer.py
+# hypothesis_version: 6.151.9
+
+['to_delta_json', 'to_delta_packet']

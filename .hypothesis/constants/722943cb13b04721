@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/mcp_advanced.py
+# hypothesis_version: 6.151.9
+
+['BatchPageMapEntry', 'ChangeDetails', 'ChangeType', 'DialogInfo', 'ExecuteActionResult', 'FillFormResult', 'FormFieldResult', 'GetPageMapResult', 'GetPageStateResult', 'NavigateBackResult', 'NavigationHint', 'PageMetadata', 'ScrollPageResult', 'TOOL_OUTPUT_SCHEMAS', 'TaskSupportConfig', 'ToolError', 'WaitForResult', 'get_output_schema']

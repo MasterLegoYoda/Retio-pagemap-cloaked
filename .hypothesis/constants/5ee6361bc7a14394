@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/web_fetch/models.py
+# hypothesis_version: 6.151.9
+
+[0.0, '(no title)', '**Warnings:**', 'HTTP status code', 'Non-fatal warnings', 'Per-URL results', 'Requested URL', 'Result URL', 'Result title', 'Search results', 'Session id', 'Short text excerpt', 'Total URLs requested', 'bing', 'brave', 'browser', 'duckduckgo', 'elapsed_ms', 'exa', 'failed', 'fast', 'firecrawl', 'google', 'html', 'json', 'markdown', 'results', 'searxng', 'session', 'succeeded', 'tavily', 'text', 'total']

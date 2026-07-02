@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/preprocessing/preprocess.py
+# hypothesis_version: 6.151.9
+
+[0.8, 2.0, 4.0, 2000, 25000, '> <', '>\\s+<', '\\s+', 'alt', 'aria-hidden', 'aria-label', 'cl100k_base', 'content', 'datetime', 'defs', 'display\\s*:\\s*none', 'div', 'href', 'html.parser', 'link', 'meta', 'name', 'noscript', 'path', 'property', 'role', 'script', 'src', 'style', 'svg', 'title', 'true', 'type', 'value']

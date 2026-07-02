@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/pruning/pipeline.py
+# hypothesis_version: 6.151.9
+
+[0.0, 0.4, 0.5, 0.8, 0.95, 1.0, 1.15, 1.5, 2.0, 3.0, 100, 200, 1000, 50000, 1000000, '-', 'A', 'AVERAGE', 'B', 'C', 'Chunks', 'Errors', 'FAIL', 'MISS', 'OK', 'PASS', 'Page', 'Pruned', 'Raw Tok', 'Recall', 'Reduction', 'Selected', 'Site', 'Time', 'alpha_aom', 'alpha_budget', 'alpha_rule', 'bp', 'cd', 'chunk_count', 'data', 'date', 'exact', 'h1', 'has_main', 'itemprop', 'list', 'long_text', 'numeric', 'simple', 'task_hint', 'task_tier_processed', 'text', 'tier_a', 'tier_b', 'tier_c', 'url']

@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/product_engine.py
+# hypothesis_version: 6.151.9
+
+[100, 200, 20000, ',', '/', '@graph', '@type', 'IndividualProduct', 'Product', 'aggregateRating', 'ausverkauft', 'availability', 'backorder', 'brand', 'color', 'colour', 'combobox', 'couleur', 'data:', 'discontinued', 'farbe', 'größe', 'highPrice', 'image', 'in_stock', 'instock', 'instoreonly', 'limited', 'limitedavailability', 'lowPrice', 'madetoorder', 'name', 'offers', 'onlineonly', 'original_price', 'other', 'out of stock', 'out_of_stock', 'outofstock', 'pre_order', 'preorder', 'presale', 'price', 'priceCurrency', 'rating', 'ratingCount', 'ratingValue', 'review', 'reviewBody', 'reviewCount', 'rupture', 'select', 'size', 'soldout', 'taille', 'title', 'url', 'カラー', 'サイズ', '売り切れ', '尺码', '尺碼', '缺货', '顏色', '颜色', '사이즈', '색상', '품절']

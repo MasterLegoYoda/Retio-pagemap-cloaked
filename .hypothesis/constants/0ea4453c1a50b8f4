@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/web_fetch/__init__.py
+# hypothesis_version: 6.151.9
+
+['BatchWebFetchEntry', 'BatchWebFetchOutput', 'BatchWebFetchResult', 'DEFAULT_SESSION_ID', 'ExtractionError', 'FetchFormat', 'FetchMode', 'InvalidSessionName', 'NEW_SESSION_PREFIX', 'NEW_SESSION_SENTINEL', 'PROVIDERS', 'ProviderError', 'SESSION_NAME_PATTERN', 'SearchProviderName', 'SessionInfo', 'SessionManager', 'SessionNotFound', 'WebFetchError', 'WebFetchOutput', 'WebFetchResult', 'WebSearchOutput', 'WebSearchResult', 'WebSession', 'available_providers', 'get_provider', 'list_provider_names', 'register_provider', 'resolve_session_arg']

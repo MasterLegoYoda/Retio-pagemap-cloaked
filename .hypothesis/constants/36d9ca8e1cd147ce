@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/web_fetch/providers/duckduckgo.py
+# hypothesis_version: 6.151.9
+
+[1000.0, '-', '//', 'Accept', 'Accept-Language', 'Enter', 'POST', 'User-Agent', '\\s+', '^result__a$', 'a', 'ascii', 'class', 'div', 'domcontentloaded', 'duckduckgo', 'en-US,en;q=0.9', 'href', 'http', 'https:', "input[name='q']", 'lxml', 'min_delay_ms', 'page', 'q', 'replace', 'result\\b', 'result__snippet', 'snippet', 'td', 'title', 'tr', 'uddg', 'uddg=', 'url', 'utf-8']

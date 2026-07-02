@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/sanitizer.py
+# hypothesis_version: 6.151.9
+
+['add_content_boundary', 'sanitize_text']

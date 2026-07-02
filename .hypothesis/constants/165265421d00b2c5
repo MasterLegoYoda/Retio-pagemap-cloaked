@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/preprocessing/normalize.py
+# hypothesis_version: 6.151.9
+
+['PriceParseResult', 'PriceResult', 'format_price', 'infer_currency', 'normalize_date', 'normalize_numeric', 'normalize_price', 'normalize_str']

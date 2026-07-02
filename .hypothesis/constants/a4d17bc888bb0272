@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/diagnostics/action_diagnostics.py
+# hypothesis_version: 6.151.9
+
+[0.3, 0.5, 0.7, 0.85, 0.9, 0.95, 200, 'diagnosis_failed', 'dom_major_change', 'error_pattern=hidden', 'major', 'timed_out_flag', 'timeout_detected', 'timeout|timed?\\s*out']

@@ -242,6 +242,109 @@ class ToolError(BaseModel):
     recovery_hint: str = Field(default="", description="Suggested recovery action for the agent")
 
 
+# ── Web fetch / search output models ─────────────────────────────────
+
+
+class WebSearchOutputModel(BaseModel):
+    """Structured output for the ``web_search`` tool."""
+
+    query: str = Field(description="The query that was executed")
+    provider: str = Field(description="Provider used to satisfy the query")
+    session: str = Field(description="Session id that handled the request")
+    session_created: bool = Field(
+        default=False, description="True if a new session was created during this call"
+    )
+    result_count: int = Field(description="Number of results returned")
+    results: list[WebSearchEntryModel] = Field(default_factory=list, description="Search results")
+    elapsed_ms: float = Field(default=0.0, description="Wall-clock time in milliseconds")
+    warnings: list[str] = Field(default_factory=list, description="Non-fatal warnings")
+
+
+class WebSearchEntryModel(BaseModel):
+    """A single entry in a web search result list."""
+
+    title: str = Field(description="Result title")
+    url: str = Field(description="Result URL")
+    snippet: str = Field(default="", description="Short text excerpt")
+    source: str | None = Field(default=None, description="Provider name (e.g. 'duckduckgo')")
+
+
+class WebFetchOutputModel(BaseModel):
+    """Structured output for the ``web_fetch`` tool."""
+
+    url: str = Field(description="The URL that was fetched (after redirects)")
+    final_url: str | None = Field(
+        default=None, description="Final URL after redirects (same as ``url`` if unchanged)"
+    )
+    title: str | None = Field(default=None, description="Page title if available")
+    content_type: str | None = Field(default=None, description="HTTP content-type header")
+    status: int | None = Field(default=None, description="HTTP status code")
+    session: str = Field(description="Session id that handled the request")
+    session_created: bool = Field(
+        default=False, description="True if a new session was created during this call"
+    )
+    format: str = Field(description="Output format that produced ``content``")
+    mode: str = Field(description="Fetch mode used (browser/fast)")
+    content: str = Field(default="", description="Extracted content (truncated if too large)")
+    content_length: int = Field(default=0, description="Length of the extracted content in chars")
+    truncated: bool = Field(default=False, description="True if ``content`` was truncated")
+    full_output_path: str | None = Field(
+        default=None,
+        description="Path to the un-truncated content when ``truncated`` is true",
+    )
+    elapsed_ms: float = Field(default=0.0, description="Wall-clock time in milliseconds")
+    warnings: list[str] = Field(default_factory=list, description="Non-fatal warnings")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Provider-specific metadata")
+
+
+class BatchWebFetchOutputModel(BaseModel):
+    """Structured output for the ``batch_web_fetch`` tool."""
+
+    total: int = Field(description="Total URLs requested")
+    succeeded: int = Field(description="Number of successful fetches")
+    failed: int = Field(description="Number of failed fetches")
+    session: str = Field(description="Session id that handled the requests")
+    session_created: bool = Field(
+        default=False, description="True if a new session was created during this call"
+    )
+    elapsed_ms: float = Field(default=0.0, description="Wall-clock time in milliseconds")
+    results: list[BatchWebFetchEntryModel] = Field(
+        default_factory=list, description="Per-URL results"
+    )
+
+
+class BatchWebFetchEntryModel(BaseModel):
+    """A single entry in a batch fetch result."""
+
+    url: str = Field(description="Requested URL")
+    success: bool = Field(description="Whether the fetch succeeded")
+    result: WebFetchOutputModel | None = Field(default=None, description="Result when successful")
+    error: str | None = Field(default=None, description="Error message when failed")
+
+
+class SessionInfoModel(BaseModel):
+    """Summary view of an active web session."""
+
+    id: str = Field(description="Session id")
+    created_at: float = Field(description="time.time() when created")
+    last_used: float = Field(description="time.time() when last used")
+    history_size: int = Field(description="Number of recorded activities")
+    is_default: bool = Field(description="True if this is the long-lived default session")
+
+
+class SessionListOutputModel(BaseModel):
+    """Structured output for the ``web_list_sessions`` tool."""
+
+    sessions: list[SessionInfoModel] = Field(default_factory=list, description="Active sessions")
+
+
+class SessionCloseOutputModel(BaseModel):
+    """Structured output for the ``web_close_session`` tool."""
+
+    closed: bool = Field(description="True when a session was closed or reset")
+    session: str = Field(description="The session id that was acted on")
+
+
 # ── Output Schema Registry ──────────────────────────────────────────────
 
 #: Maps tool names to their Pydantic output model, or ``None`` for tools
@@ -260,6 +363,12 @@ TOOL_OUTPUT_SCHEMAS: dict[str, type[BaseModel] | None] = {
     "switch_tab": None,
     "list_tabs": None,
     "close_tab": None,
+    # Web fetch / search
+    "web_search": WebSearchOutputModel,
+    "web_fetch": WebFetchOutputModel,
+    "batch_web_fetch": BatchWebFetchOutputModel,
+    "web_list_sessions": SessionListOutputModel,
+    "web_close_session": SessionCloseOutputModel,
 }
 
 

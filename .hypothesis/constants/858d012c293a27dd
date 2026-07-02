@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/session_manager.py
+# hypothesis_version: 6.151.9
+
+['DEFAULT_SESSION_TTL', 'HttpSessionManager', 'MAX_NAVIGATIONS', 'MAX_SESSION_AGE', 'MAX_TABS_PER_SESSION', 'STDIO_SESSION_ID', 'SessionEntry', 'SessionNotFoundError', 'StdioSessionManager']

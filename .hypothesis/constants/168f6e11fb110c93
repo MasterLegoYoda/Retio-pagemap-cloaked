@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/ecommerce/_card_extractor.py
+# hypothesis_version: 6.151.9
+
+['PaginationRefs', 'extract_cards', 'find_filter_refs', 'find_pagination_refs']

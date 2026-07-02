@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/pruning/__init__.py
+# hypothesis_version: 6.151.9
+
+['Event', 'FAQPage', 'Generic', 'GovernmentPage', 'LocalBusiness', 'NewsArticle', 'Product', 'SaaSPage', 'VideoObject', 'WikiArticle', 'adjacent-boost', 'article', 'checkout', 'dashboard', 'documentation', 'error', 'form', 'heading', 'help_faq', 'in-main-form', 'in-main-heading', 'in-main-media', 'in-main-short', 'in-main-structured', 'in-main-text', 'keep-form-no-main', 'keep-heading-no-main', 'keep-media-no-main', 'keep-text-no-main', 'landing', 'list', 'listing', 'login', 'media', 'meta', 'meta-always-keep', 'news', 'no-match', 'product_detail', 'rsc_data', 'schema-match', 'search_results', 'settings', 'table', 'text_block', 'unknown', 'video']

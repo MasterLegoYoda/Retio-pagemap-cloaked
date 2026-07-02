@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/search_engine.py
+# hypothesis_version: 6.151.9
+
+[100, 200, ')\\b', '[,.\\s]', '\\b(?:', 'combobox', 'k', 'keyword', 'q', 'query', 's', 'search', 'searchTerm', 'searchWord', 'select', 'totalResults', 'total_results', '|']

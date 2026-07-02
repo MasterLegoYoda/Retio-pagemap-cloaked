@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/ecommerce/e2e_site_config.py
+# hypothesis_version: 6.151.9
+
+['29cm', 'CNY', 'EUR', 'GBP', 'INR', 'JPY', 'KRW', 'USD', 'adidas', 'aliexpress', 'amazon', 'asos', 'cookie_consent', 'cos', 'coupang', 'de', 'ebay', 'en', 'farfetch', 'flipkart', 'hm', 'ja', 'ko', 'listing', 'musinsa', 'naver_shopping', 'nike', 'nordstrom', 'product_detail', 'rakuten', 'search_results', 'shein', 'ssg', 'taobao', 'uniqlo', 'walmart', 'zalando', 'zara', 'zh']

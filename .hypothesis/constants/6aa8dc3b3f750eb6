@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/core/diagnostics/scroll_merge.py
+# hypothesis_version: 6.151.9
+
+['\\s+', 'name', 'price', 'url']

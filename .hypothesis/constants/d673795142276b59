@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/dom_change_detector.py
+# hypothesis_version: 6.151.9
+
+['DomChangeVerdict', 'DomFingerprint', 'DomLandmarkVector', 'detect_dom_changes']

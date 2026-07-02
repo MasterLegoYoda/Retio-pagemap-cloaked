@@ -1,0 +1,4 @@
+# file: /home/noesis/Documents/workspace/cloakedRetio/Retio-pagemap-cloaked/src/pagemap/_progress.py
+# hypothesis_version: 6.151.9
+
+['print_step', 'status_spinner']
