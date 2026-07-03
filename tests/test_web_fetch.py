@@ -498,6 +498,186 @@ class TestProviderRegistry:
         asyncio.run(run())
 
 
+# ── Fast mode (HTTP-only) ──────────────────────────────────────────
+
+
+class TestFastModeFetch:
+    """End-to-end tests for ``_web_fetch_impl`` with ``mode="fast"``.
+
+    Patches the resolved HttpBackend so no real network is hit.
+    """
+
+    @pytest.mark.asyncio
+    async def test_fast_mode_returns_extracted_content(self, monkeypatch):
+        from pagemap.web_fetch.http.base import HttpResponse
+
+        async def fake_fetch(self, url, **_):
+            return HttpResponse(
+                url=url,
+                status=200,
+                headers={"content-type": "text/html"},
+                text="<html><body><h1>Hello</h1><p>World</p></body></html>",
+                set_cookies=[],
+            )
+
+        from pagemap.web_fetch.http.backends import UrllibBackend
+
+        monkeypatch.setattr(UrllibBackend, "fetch", fake_fetch)
+
+        # Force the registry to resolve to the urllib backend.
+        import pagemap.server as srv
+
+        monkeypatch.setattr(srv, "_http_backend", UrllibBackend(), raising=False)
+        monkeypatch.setattr(srv, "_http_backend_name", "urllib", raising=False)
+
+        from pagemap.server import _web_fetch_impl
+
+        ctx = type("C", (), {"request_id": "r1", "session_id": "s1", "client_id": "c1"})()
+        out = await _web_fetch_impl(
+            url="https://example.com/page",
+            mode="fast",
+            format="markdown",
+            max_chars=50_000,
+            session_arg=None,
+            request_id="r1",
+            ctx=ctx,
+        )
+        assert "Hello" in out
+        assert "World" in out
+        assert "Error" not in out or out.startswith("# ")
+
+    @pytest.mark.asyncio
+    async def test_fast_mode_persists_cookies(self, monkeypatch):
+        from pagemap.web_fetch.http.base import HttpResponse, SetCookie
+
+        calls: list[dict] = []
+
+        async def fake_fetch(self, url, *, cookies=None, **_):
+            calls.append({"url": url, "cookies": dict(cookies or {})})
+            if "login" in url:
+                return HttpResponse(
+                    url=url,
+                    status=200,
+                    headers={"content-type": "text/html"},
+                    text="<html><body>logged in</body></html>",
+                    set_cookies=[SetCookie(name="sid", value="abc", path="/")],
+                )
+            return HttpResponse(
+                url=url,
+                status=200,
+                headers={"content-type": "text/html"},
+                text="<html><body>profile</body></html>",
+                set_cookies=[],
+            )
+
+        from pagemap.web_fetch.http.backends import UrllibBackend
+
+        monkeypatch.setattr(UrllibBackend, "fetch", fake_fetch)
+
+        import pagemap.server as srv
+
+        monkeypatch.setattr(srv, "_http_backend", UrllibBackend(), raising=False)
+        monkeypatch.setattr(srv, "_http_backend_name", "urllib", raising=False)
+
+        from pagemap.server import _web_fetch_impl
+
+        ctx = type("C", (), {"request_id": "r1", "session_id": "s1", "client_id": "c1"})()
+
+        # Use the same session id for both calls to share the cookie jar.
+        out1 = await _web_fetch_impl(
+            url="https://example.com/login",
+            mode="fast",
+            format="text",
+            max_chars=50_000,
+            session_arg="new:cookie-test",
+            request_id="r1",
+            ctx=ctx,
+        )
+        out2 = await _web_fetch_impl(
+            url="https://example.com/profile",
+            mode="fast",
+            format="text",
+            max_chars=50_000,
+            session_arg="cookie-test",
+            request_id="r1",
+            ctx=ctx,
+        )
+        # First call should not have sent any cookies.
+        assert calls[0]["cookies"] == {}
+        # Second call should have sent the cookie from the first call.
+        assert calls[1]["cookies"].get("sid") == "abc"
+        assert "logged in" in out1
+        assert "profile" in out2
+
+    @pytest.mark.asyncio
+    async def test_fast_mode_metadata_records_backend(self, monkeypatch):
+        from pagemap.web_fetch.http.base import HttpResponse
+
+        async def fake_fetch(self, url, **_):
+            return HttpResponse(
+                url=url,
+                status=200,
+                headers={"content-type": "text/html"},
+                text="<html><body>x</body></html>",
+                set_cookies=[],
+            )
+
+        from pagemap.web_fetch.http.backends import UrllibBackend
+
+        monkeypatch.setattr(UrllibBackend, "fetch", fake_fetch)
+
+        import pagemap.server as srv
+
+        monkeypatch.setattr(srv, "_http_backend", UrllibBackend(), raising=False)
+        monkeypatch.setattr(srv, "_http_backend_name", "urllib", raising=False)
+
+        from pagemap.server import _web_fetch_impl
+
+        ctx = type("C", (), {"request_id": "r1", "session_id": "s1", "client_id": "c1"})()
+        out = await _web_fetch_impl(
+            url="https://example.com/",
+            mode="fast",
+            format="json",
+            max_chars=50_000,
+            session_arg=None,
+            request_id="r1",
+            ctx=ctx,
+        )
+        # JSON format surfaces metadata; assert backend name appears.
+        assert "urllib" in out
+
+    @pytest.mark.asyncio
+    async def test_fast_mode_surfaces_backend_error(self, monkeypatch):
+        from pagemap.web_fetch.http.base import HttpBackendError
+
+        async def fake_fetch(self, url, **_):
+            raise HttpBackendError("simulated dns failure")
+
+        from pagemap.web_fetch.http.backends import UrllibBackend
+
+        monkeypatch.setattr(UrllibBackend, "fetch", fake_fetch)
+
+        import pagemap.server as srv
+
+        monkeypatch.setattr(srv, "_http_backend", UrllibBackend(), raising=False)
+        monkeypatch.setattr(srv, "_http_backend_name", "urllib", raising=False)
+
+        from pagemap.server import _web_fetch_impl
+
+        ctx = type("C", (), {"request_id": "r1", "session_id": "s1", "client_id": "c1"})()
+        out = await _web_fetch_impl(
+            url="https://example.com/",
+            mode="fast",
+            format="markdown",
+            max_chars=50_000,
+            session_arg=None,
+            request_id="r1",
+            ctx=ctx,
+        )
+        assert "simulated dns failure" in out
+        assert "Error" in out
+
+
 # ── Model round-trips ──────────────────────────────────────────────
 
 

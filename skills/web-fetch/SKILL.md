@@ -131,9 +131,18 @@ for q in ["...", "...", "..."]:
 
 ## Caveats
 
-- **CloakBrowser required.** The default fetch mode is `browser` because
-  it can render JS-heavy pages. Make sure the server is running
-  (`pagemap` CLI on PATH) and `cloakbrowser install` has been run.
+- **CloakBrowser optional for `mode="fast"`.** The default fetch mode
+  is `browser` (CloakBrowser-rendered). `mode="fast"` is the simple
+  HTTP-only path and does NOT require CloakBrowser — it uses an
+  `HttpBackend` (`curl_cffi` by default, falling back to `httpx` /
+  `urllib`).  Install `curl_cffi` for the best bot-detection bypass:
+
+  ```bash
+  pip install 'retio-pagemap[fast]'
+  ```
+
+  Override the backend at runtime with `PAGEMAP_FAST_BACKEND` or
+  `--fast-backend`.
 - **Search engine ToS.** DuckDuckGo's HTML endpoint is a courtesy; be
   reasonable with request rate. Named sessions naturally add a tiny
   delay between calls and make the activity look organic.

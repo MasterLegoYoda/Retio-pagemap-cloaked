@@ -28,6 +28,7 @@ from .models import SessionInfo
 
 __all__ = [
     "DEFAULT_SESSION_ID",
+    "HttpSessionState",
     "NEW_SESSION_SENTINEL",
     "NEW_SESSION_PREFIX",
     "SESSION_NAME_PATTERN",
@@ -63,11 +64,53 @@ def _validate_explicit_name(name: str) -> str:
 
 
 @dataclass
+class HttpSessionState:
+    """Per-session state for the HTTP-only ``fast`` transport.
+
+    Mirrors the role that ``WebSession.browser`` plays for the
+    Playwright-backed ``browser`` mode: one of these is attached to
+    a :class:`WebSession` lazily on the first fast-mode call and
+    persists for the lifetime of the session so cookies, default
+    headers, and request counters carry across calls.
+
+    Cookies are kept as a flat ``name -> value`` dict — bot-detection
+    bypass typically does not need full RFC 6265 path / domain
+    scoping, and a simple merge keeps the surface area small.
+    """
+
+    cookies: dict[str, str] = field(default_factory=dict)
+    user_agent: str = (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+    request_count: int = 0
+    backend_name: str = "auto"
+
+    def merge_set_cookies(self, set_cookies: list[Any]) -> None:
+        """Merge a list of :class:`~pagemap.web_fetch.http.SetCookie` into the jar.
+
+        Best-effort: ignores entries that lack a name/value.  Does
+        not honour ``path``/``domain``/``expires`` — fast mode treats
+        every cookie as a session-scoped global.  If real cookie
+        scoping becomes necessary, swap this for a real jar.
+        """
+        for sc in set_cookies:
+            name = getattr(sc, "name", None)
+            value = getattr(sc, "value", None)
+            if name and value is not None:
+                self.cookies[name] = value
+
+
+@dataclass
 class WebSession:
     """A named web session.
 
     The ``browser`` attribute is intentionally ``Any`` to avoid hard-coupling
     to the PageMap ``BrowserSession`` type; the MCP layer wires it in.
+    ``http`` is the counterpart for the ``mode="fast"`` transport — it
+    carries per-session cookies / headers / counters so a named
+    session behaves the same whether it is driven through a browser
+    or through an :class:`HttpBackend`.
     """
 
     id: str
@@ -75,6 +118,7 @@ class WebSession:
     last_used: float = field(default_factory=_time.time)
     history: list[dict[str, Any]] = field(default_factory=list)
     browser: Any = None  # BrowserSession | None
+    http: HttpSessionState | None = None  # fast-mode transport state
     is_default: bool = False
     _closed: bool = field(default=False, init=False)
 

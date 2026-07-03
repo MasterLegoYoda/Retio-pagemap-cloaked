@@ -128,16 +128,19 @@ from pagemap.web_fetch import (
     BatchWebFetchResult as _WebBatchResult,
     FetchFormat as _FetchFormat,
     FetchMode as _FetchMode,
+    HttpSessionState as _HttpSessionState,
     InvalidSessionName as _InvalidSessionName,
     ProviderError as _ProviderError,
     SessionManager as _SessionManager,
     SessionNotFound as _SessionNotFound,
     WebFetchResult as _WebFetchResult,
     WebSearchResult as _WebSearchEntry,
-    extract as _extract_content,
     get_provider as _get_search_provider,
+    http as _http_backends,
     resolve_session_arg as _resolve_session_arg,
 )
+from pagemap.web_fetch.extract import extract as _extract_content
+from pagemap.web_fetch.http.base import HttpBackendError as _HttpBackendError
 
 from .action_helpers import (
     _BROWSER_DEAD_PATTERNS as _BROWSER_DEAD_PATTERNS,
@@ -3535,6 +3538,55 @@ _BATCH_WEB_FETCH_OVERALL_TIMEOUT = 120.0
 _WEB_FETCH_FORMATS = frozenset({"markdown", "text", "html", "json"})
 _WEB_FETCH_MODES = frozenset({"browser", "fast"})
 
+#: Module-level singleton for the resolved HTTP backend.  Cached on
+#: first use; cleared by ``_http_backend_singleton`` tests via
+#: ``setattr(srv, "_http_backend", None)``.  ``None`` means "not yet
+#: resolved" — the next ``_get_http_backend()`` call picks one based
+#: on the current ``PAGEMAP_FAST_BACKEND`` env / CLI config.
+_http_backend: object | None = None
+#: Last backend name surfaced for telemetry / ``WebFetchResult.metadata``.
+_http_backend_name: str = "auto"
+
+
+def _get_http_backend() -> object:
+    """Return the configured HTTP backend, resolving it on first use.
+
+    Reads ``PAGEMAP_FAST_BACKEND`` (or the parsed CLI value) the
+    first time it is called and caches the resulting backend.  Tests
+    can clear the cache by setting ``srv._http_backend = None``.
+    """
+    global _http_backend, _http_backend_name
+    if _http_backend is None:
+        prefer = _get_fast_backend_prefer()
+        _http_backend = _http_backends.resolve_backend(prefer)
+        _http_backend_name = getattr(_http_backend, "name", "unknown")
+    return _http_backend
+
+
+def _get_fast_backend_prefer() -> str | None:
+    """Return the configured backend preference (CLI > env > default ``"auto"``)."""
+    # CLI flag wins (set in main() before tools run).
+    cli = globals().get("_fast_backend_cli")
+    if cli:
+        return cli
+    env = os.environ.get("PAGEMAP_FAST_BACKEND", "").strip().lower()
+    if env:
+        return env
+    return "auto"
+
+
+def _ensure_http_attached(session) -> _HttpSessionState:
+    """Return a per-session :class:`HttpSessionState`, creating it if needed.
+
+    Mirrors :func:`_ensure_browser_attached` for the fast-mode
+    transport.  The state is attached lazily on the first fast call
+    so sessions created in pure-browser mode never allocate an HTTP
+    jar.
+    """
+    if session.http is None:
+        session.http = _HttpSessionState(backend_name=_http_backend_name)
+    return session.http
+
 
 async def _ensure_browser_attached(session) -> None:
     """Attach the active PageMap browser to ``session`` if available.
@@ -3576,6 +3628,88 @@ async def _validate_web_url(url: str) -> str | None:
     """SSRF guard reused from the existing get_page_map path. Returns an
     error message string on failure, ``None`` on success."""
     return await _validate_url_with_dns(url)
+
+
+async def _fast_fetch_page(
+    *,
+    url: str,
+    session,
+    timeout: float = 30.0,
+    impersonate: str | None = None,
+) -> dict:
+    """Run one fast-mode HTTP fetch against ``url`` and return extracted fields.
+
+    Returns a dict with the same shape used to populate a
+    :class:`WebFetchResult` — ``title``, ``raw_html``, ``status``,
+    ``content_type``, ``final_url``, ``metadata``, ``warnings``.  The
+    caller (``_web_fetch_impl``) wraps that into the user-facing
+    :class:`WebFetchResult` so that the result is byte-identical
+    whether it came from a browser or a backend.
+
+    SSRF: ``url`` is re-validated against the redirect target because
+    :class:`HttpBackend` implementations may follow redirects to
+    blocked hosts.
+    """
+    http_state = _ensure_http_attached(session)
+    backend = _get_http_backend()
+    backend_name = getattr(backend, "name", "unknown")
+    http_state.request_count += 1
+    http_state.backend_name = backend_name
+
+    metadata: dict = {"backend": backend_name}
+    warnings: list[str] = []
+
+    headers: dict[str, str] = {"User-Agent": http_state.user_agent}
+
+    try:
+        response = await backend.fetch(
+            url,
+            headers=headers,
+            cookies=http_state.cookies,
+            timeout=timeout,
+            follow_redirects=True,
+            impersonate=impersonate,
+        )
+    except _HttpBackendError as exc:
+        return {
+            "ok": False,
+            "error": f"Error: fetch failed: {exc}",
+            "metadata": metadata,
+            "warnings": warnings,
+        }
+
+    # Persist any cookies the server handed us into the session jar
+    # so the next fast call on the same session sends them back.
+    if response.set_cookies:
+        http_state.merge_set_cookies(response.set_cookies)
+        metadata["cookies_set"] = len(response.set_cookies)
+
+    # Post-redirect SSRF guard.  ``response.url`` is the final URL
+    # after redirects; we re-validate to catch a redirect chain that
+    # landed on a private/metadata IP.
+    try:
+        post_error = await _validate_web_url(response.url)
+    except Exception as exc:  # nosec B110
+        post_error = f"redirect validation failed: {exc}"
+    if post_error:
+        return {
+            "ok": False,
+            "error": f"Error: Redirect led to blocked URL — {post_error}",
+            "metadata": metadata,
+            "warnings": warnings,
+        }
+
+    content_type = response.headers.get("content-type")
+    return {
+        "ok": True,
+        "title": None,
+        "raw_html": response.text,
+        "status": response.status,
+        "content_type": content_type,
+        "final_url": response.url,
+        "metadata": metadata,
+        "warnings": warnings,
+    }
 
 
 # ── web_search ──────────────────────────────────────────────────────
@@ -3753,8 +3887,13 @@ async def web_fetch(
 
     Args:
         url: URL to fetch (http/https only).
-        mode: ``browser`` (default, CloakBrowser-rendered) or ``fast`` (not
-            yet implemented; raises a clear error).
+        mode: ``browser`` (default, CloakBrowser-rendered) or ``fast``
+            (HTTP-only via :mod:`pagemap.web_fetch.http`).  Fast mode
+            uses an :class:`HttpBackend` (``curl_cffi`` by default,
+            falling back to ``httpx`` / ``urllib``) and never spins
+            up a browser — useful for read-only lookups when CloakBrowser
+            is not installed.  Fast mode shares cookies with the
+            session's ``http`` jar.
         format: Output format: ``markdown`` (default), ``text``, ``html``,
             or ``json``.
         max_chars: Truncation limit for ``content`` (default 50,000).
@@ -3823,7 +3962,67 @@ async def _web_fetch_impl(
     metadata: dict = {}
 
     if fetch_mode == _FetchMode.fast:
-        return "Error: mode='fast' is not yet implemented. Use mode='browser' for now."
+        # HTTP-only path: do not touch the browser.  We use the
+        # configured HttpBackend (curl_cffi by default, falling back
+        # to httpx / urllib) and the session's persistent cookie jar.
+        fast = await _fast_fetch_page(
+            url=url,
+            session=sess,
+            timeout=30.0,
+        )
+        if not fast.get("ok"):
+            return fast.get("error") or "Error: fast fetch failed"
+        raw_html = fast["raw_html"]
+        parsed_final_url = fast.get("final_url") or url
+        status = fast.get("status")
+        content_type = fast.get("content_type")
+        title = fast.get("title")
+        metadata = dict(fast.get("metadata") or {})
+        warnings.extend(fast.get("warnings") or [])
+
+        try:
+            extracted = _extract_content(
+                raw_html=raw_html or "",
+                url=parsed_final_url or url,
+                fmt=fmt,
+                max_chars=max_chars,
+            )
+        except Exception as exc:  # nosec B110
+            return f"Error: extraction failed: {exc}"
+
+        if extracted.warnings:
+            warnings.extend(extracted.warnings)
+
+        elapsed_ms = (_time_mod.monotonic() - t0) * 1000.0
+        sess.record(
+            "fetch",
+            url=url,
+            final_url=parsed_final_url,
+            mode=fetch_mode.value,
+            format=fmt.value,
+            truncated=extracted.truncated,
+            chars=extracted.content_length,
+        )
+
+        result = _WebFetchResult(
+            url=url,
+            final_url=parsed_final_url or url,
+            title=extracted.title or title,
+            content_type=content_type,
+            status=status,
+            session=sess.id,
+            session_created=created,
+            format=fmt.value,
+            mode=fetch_mode.value,
+            content=extracted.content,
+            content_length=extracted.content_length,
+            truncated=extracted.truncated,
+            full_output_path=extracted.full_output_path,
+            elapsed_ms=elapsed_ms,
+            warnings=warnings,
+            metadata=metadata,
+        )
+        return _check_response_size(str(result), tool="web_fetch")
 
     # browser mode
     page = None
@@ -3837,7 +4036,7 @@ async def _web_fetch_impl(
     if page is None:
         return (
             "Error: No browser session is available for mode='browser'. "
-            "Start the MCP server (which spins up CloakBrowser) or implement "
+            "Start the MCP server (which spins up CloakBrowser) or use "
             "mode='fast' to fetch without a browser."
         )
 
@@ -3927,7 +4126,8 @@ async def batch_web_fetch(
 
     Args:
         urls: List of URLs to fetch (1-10).
-        mode: ``browser`` (default) or ``fast`` (not yet implemented).
+        mode: ``browser`` (default) or ``fast`` (HTTP-only; see
+            :func:`web_fetch` for the full description of fast mode).
         format: Output format (default ``markdown``).
         max_chars: Per-URL truncation limit (default 50,000).
         max_concurrency: Max parallel pages (1-5, default 5).
@@ -4015,19 +4215,6 @@ async def _batch_web_fetch_impl(
 
     await _ensure_browser_attached(sess)
 
-    if mode == "fast":
-        return json.dumps(
-            {
-                "error": "mode='fast' is not yet implemented. Use mode='browser' for now.",
-                "results": [
-                    {"url": u, "success": False, "error": "fast mode not implemented"}
-                    for u in valid_urls
-                ],
-                "summary": {"total": len(urls), "succeeded": 0, "failed": len(urls)},
-            },
-            ensure_ascii=False,
-        )
-
     effective_concurrency = min(max(1, max_concurrency), _BATCH_WEB_FETCH_MAX_CONCURRENCY)
     semaphore = asyncio.Semaphore(effective_concurrency)
 
@@ -4038,7 +4225,7 @@ async def _batch_web_fetch_impl(
             try:
                 result = await _web_fetch_impl(
                     url=u,
-                    mode="browser",
+                    mode=mode,
                     format=format,
                     max_chars=max_chars,
                     session_arg=sess.id,
@@ -4354,6 +4541,16 @@ def _parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Graceful shutdown drain timeout seconds (default: 30)",
     )
     parser.add_argument(
+        "--fast-backend",
+        choices=("auto", "curl_cffi", "httpx", "urllib"),
+        default=None,
+        help=(
+            "HTTP backend used by web_fetch mode='fast'. "
+            "'auto' picks curl_cffi > httpx > urllib based on availability. "
+            "Set PAGEMAP_FAST_BACKEND to override without CLI."
+        ),
+    )
+    parser.add_argument(
         "--require-tls",
         action="store_true",
         default=False,
@@ -4433,6 +4630,13 @@ def _parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
         with suppress(ValueError):
             args.drain_timeout = int(env_drain)
 
+    env_fast_backend = os.environ.get("PAGEMAP_FAST_BACKEND", "").strip().lower()
+    if env_fast_backend in ("auto", "curl_cffi", "httpx", "urllib"):
+        if args.fast_backend is None:
+            args.fast_backend = env_fast_backend
+    if args.fast_backend is None:
+        args.fast_backend = "auto"
+
     env_tls = os.environ.get("PAGEMAP_REQUIRE_TLS", "").strip().lower()
     args.require_tls = args.require_tls or env_tls in ("1", "true", "yes")
 
@@ -4498,6 +4702,12 @@ def main(argv: list[str] | None = None):
     _bot_ua = args.bot_ua
     _require_tls = args.require_tls
     _db_path = args.db_path or os.path.expanduser("~/.pagemap/pagemap.db")
+    # Wire the fast-backend CLI choice into the module-level helper
+    # used by ``_get_http_backend()``.  Setting it on the module (not
+    # a global) keeps tests free to monkeypatch.
+    globals()["_fast_backend_cli"] = args.fast_backend
+    # Drop any cached backend so the new preference takes effect.
+    globals()["_http_backend"] = None
 
     # Configure structlog BEFORE any log output
     from .logging_config import configure as configure_logging

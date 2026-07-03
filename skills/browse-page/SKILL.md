@@ -68,12 +68,20 @@ HTML, or JSON.
 
 - `url` (required, http/https).
 - `mode` — `browser` (default, CloakBrowser-rendered) or `fast`
-  (not yet implemented).
+  (HTTP-only; uses `curl_cffi` / `httpx` / `urllib` and never starts
+  a browser).
 - `format` — `markdown` / `text` / `html` / `json`. Default `markdown`.
 - `max_chars` (default 50,000) — when the response is larger, the body
   is truncated and the full content is written to a temp file
   (`full_output_path` in the response). Read that file on demand.
 - `session` — see *Named sessions* below.
+
+**Fast mode** is the right choice when you only need the rendered
+content and the page is static-ish HTML (docs, articles, blogs,
+search results, JSON APIs).  It does not execute JavaScript, so
+single-page apps that require a browser to populate content need
+`mode="browser"`.  The HTTP backend in use is reported in
+`metadata.backend` on the response.
 
 **Default output is markdown.** It's small, agent-friendly, and good
 enough for the vast majority of docs and articles.
@@ -192,7 +200,12 @@ Ask yourself: **does the task require interacting with the page?**
   to load more, then `get_page_map` to see the new content.
 - **Need a fresh session** (e.g. the previous one was rate-limited):
   pass `session="new"` or `session="new:<name>"` to your next call.
-- **CloakBrowser not installed.** Run `cloakbrowser install` once.
+- **CloakBrowser not installed for fast mode.** `mode="fast"` works
+  without CloakBrowser.  For `mode="browser"`, run
+  `cloakbrowser install` once.
+- **Fast mode bot-detection failures.** If a site 403s the fast
+  transport, install `curl_cffi` (`pip install 'retio-pagemap[fast]'`)
+  for TLS impersonation, or fall back to `mode="browser"`.
 
 ## 5. Security
 

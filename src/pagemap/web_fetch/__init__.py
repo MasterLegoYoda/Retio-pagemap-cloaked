@@ -44,6 +44,7 @@ from .sessions import (
     NEW_SESSION_PREFIX,
     NEW_SESSION_SENTINEL,
     SESSION_NAME_PATTERN,
+    HttpSessionState,
     SessionManager,
     WebSession,
     resolve_session_arg,
@@ -51,6 +52,7 @@ from .sessions import (
 
 __all__ = [
     "DEFAULT_SESSION_ID",
+    "HttpSessionState",
     "NEW_SESSION_PREFIX",
     "NEW_SESSION_SENTINEL",
     "PROVIDERS",

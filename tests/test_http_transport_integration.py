@@ -223,6 +223,69 @@ class TestEnvVarParsing:
 
 
 # ---------------------------------------------------------------------------
+# --fast-backend flag tests
+# ---------------------------------------------------------------------------
+
+
+class TestFastBackendFlag:
+    """Tests for the ``--fast-backend`` CLI flag and ``PAGEMAP_FAST_BACKEND`` env."""
+
+    def test_default_fast_backend_is_auto(self):
+        args = srv._parse_server_args([])
+        assert args.fast_backend == "auto"
+
+    def test_fast_backend_curl_cffi(self):
+        args = srv._parse_server_args(["--fast-backend", "curl_cffi"])
+        assert args.fast_backend == "curl_cffi"
+
+    def test_fast_backend_httpx(self):
+        args = srv._parse_server_args(["--fast-backend", "httpx"])
+        assert args.fast_backend == "httpx"
+
+    def test_fast_backend_urllib(self):
+        args = srv._parse_server_args(["--fast-backend", "urllib"])
+        assert args.fast_backend == "urllib"
+
+    def test_fast_backend_invalid_ignored(self):
+        """An unknown backend value should be rejected by argparse."""
+        with pytest.raises(SystemExit):
+            srv._parse_server_args(["--fast-backend", "does-not-exist"])
+
+    def test_env_fast_backend(self):
+        with patch.dict(os.environ, {"PAGEMAP_FAST_BACKEND": "urllib"}):
+            args = srv._parse_server_args([])
+            assert args.fast_backend == "urllib"
+
+    def test_env_fast_backend_invalid_ignored(self):
+        with patch.dict(os.environ, {"PAGEMAP_FAST_BACKEND": "totally-fake"}):
+            args = srv._parse_server_args([])
+            assert args.fast_backend == "auto"  # unchanged
+
+    def test_cli_overrides_env(self):
+        with patch.dict(os.environ, {"PAGEMAP_FAST_BACKEND": "urllib"}):
+            args = srv._parse_server_args(["--fast-backend", "httpx"])
+            assert args.fast_backend == "httpx"
+
+    def test_get_fast_backend_prefer_returns_cli(self, monkeypatch):
+        from pagemap import server as srv_mod
+        monkeypatch.setattr(srv_mod, "_fast_backend_cli", "urllib", raising=False)
+        assert srv._get_fast_backend_prefer() == "urllib"
+
+    def test_get_fast_backend_prefer_falls_back_to_env(self, monkeypatch):
+        from pagemap import server as srv_mod
+        monkeypatch.setattr(srv_mod, "_fast_backend_cli", "", raising=False)
+        with patch.dict(os.environ, {"PAGEMAP_FAST_BACKEND": "urllib"}):
+            assert srv._get_fast_backend_prefer() == "urllib"
+
+    def test_get_fast_backend_prefer_defaults_to_auto(self, monkeypatch):
+        from pagemap import server as srv_mod
+        monkeypatch.setattr(srv_mod, "_fast_backend_cli", "", raising=False)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PAGEMAP_FAST_BACKEND", None)
+            assert srv._get_fast_backend_prefer() == "auto"
+
+
+# ---------------------------------------------------------------------------
 # CORS validation tests
 # ---------------------------------------------------------------------------
 
