@@ -116,7 +116,12 @@ class BrowserPool:
 
     async def __aenter__(self) -> BrowserPool:
         if not self._config.persistent_profile:
-            self._browser = await launch_cloak_browser(self._config)
+            if self._config.cdp_endpoint:
+                from .browser_session import connect_via_cdp
+
+                self._browser = await connect_via_cdp(self._config.cdp_endpoint)
+            else:
+                self._browser = await launch_cloak_browser(self._config)
 
         self._semaphore = asyncio.Semaphore(self._max_contexts)
         self._available_slots = self._max_contexts
@@ -124,10 +129,11 @@ class BrowserPool:
         self._started = True
         self._start_reaper()
         logger.info(
-            "BrowserPool started (max_contexts=%d, idle_timeout=%.0fs, persistent=%s)",
+            "BrowserPool started (max_contexts=%d, idle_timeout=%.0fs, persistent=%s, cdp=%s)",
             self._max_contexts,
             self._idle_timeout,
             self._config.persistent_profile,
+            bool(self._config.cdp_endpoint),
         )
         return self
 
@@ -306,6 +312,12 @@ class BrowserPool:
         if self._browser:
             with suppress(Exception):
                 await self._browser.close()
+            # If we connected via CDP, stop the playwright instance
+            if self._config.cdp_endpoint:
+                pw = getattr(self._browser, "_pagemap_playwright", None)
+                if pw is not None:
+                    with suppress(Exception):
+                        await pw.stop()
             self._browser = None
         self._started = False
 

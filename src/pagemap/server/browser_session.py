@@ -161,6 +161,7 @@ class BrowserConfig:
         default_factory=lambda: os.environ.get("PAGEMAP_CLOAK_PROFILE_ROOT", "~/.pagemap/cloak-profiles")
     )
     pagemap_js_stealth: bool = field(default_factory=lambda: _env_bool("PAGEMAP_STEALTH_ENABLED", False))
+    cdp_endpoint: str | None = field(default_factory=lambda: _env_str("PAGEMAP_CDP_ENDPOINT"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +254,24 @@ async def launch_cloak_browser(config: BrowserConfig) -> Browser:
     except ModuleNotFoundError as exc:
         raise _cloak_import_error() from exc
     return await launch_async(**_cloak_launch_kwargs(config))
+
+
+async def connect_via_cdp(endpoint: str) -> Browser:
+    """Connect to an existing browser via CDP WebSocket endpoint.
+
+    Args:
+        endpoint: CDP WebSocket URL (e.g., ws://host:9222/devtools/browser/<id>)
+
+    Returns:
+        Playwright Browser connected to the remote instance.
+    """
+    from playwright.async_api import async_playwright
+
+    playwright = await async_playwright().start()
+    browser = await playwright.chromium.connect_over_cdp(endpoint)
+    # Store playwright reference on browser for cleanup (see BrowserSession.stop())
+    browser._pagemap_playwright = playwright
+    return browser
 
 
 async def launch_cloak_persistent_context(config: BrowserConfig, user_data_dir: str | Path) -> BrowserContext:
@@ -354,8 +373,11 @@ class BrowserSession:
         return cloak_launch_args(self.config)
 
     async def _launch_browser(self) -> None:
-        """Launch a shared CloakBrowser browser."""
-        self._browser = await launch_cloak_browser(self.config)
+        """Launch a shared CloakBrowser browser or connect via CDP."""
+        if self.config.cdp_endpoint:
+            self._browser = await connect_via_cdp(self.config.cdp_endpoint)
+        else:
+            self._browser = await launch_cloak_browser(self.config)
 
     async def _create_context(self, browser: Browser) -> None:
         """Create BrowserContext + Page + event handlers on given browser."""
@@ -645,6 +667,12 @@ class BrowserSession:
             if self._browser:
                 with suppress(Exception):
                     await self._browser.close()
+                # If we connected via CDP, stop the playwright instance we own
+                if self.config.cdp_endpoint:
+                    pw = getattr(self._browser, "_pagemap_playwright", None)
+                    if pw is not None:
+                        with suppress(Exception):
+                            await pw.stop()
                 self._browser = None
             self._playwright = None
         else:
