@@ -4679,6 +4679,7 @@ def _parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cloak-persistent", action="store_true", default=False, help="Use per-session persistent profiles.")
     parser.add_argument("--cloak-profile-root", default="", help="Directory for CloakBrowser persistent profiles.")
     parser.add_argument("--cloak-extra-arg", action="append", default=None, help="Extra Chromium arg passed via CloakBrowser.")
+    parser.add_argument("--cdp-endpoint", default="", help="CDP WebSocket endpoint for external browser (e.g., ws://host:9222/devtools/browser/<id>).")
     args, _ = parser.parse_known_args(argv)
 
     # Env var overrides
@@ -4768,6 +4769,8 @@ def _apply_cloak_args_to_env(args) -> None:
         os.environ["PAGEMAP_CLOAK_EXTENSION_PATHS"] = ",".join(args.cloak_extension_path)
     if getattr(args, "cloak_extra_arg", None):
         os.environ["PAGEMAP_CLOAK_EXTRA_ARGS"] = " ".join(shlex.quote(arg) for arg in args.cloak_extra_arg)
+    if getattr(args, "cdp_endpoint", ""):
+        os.environ["PAGEMAP_CDP_ENDPOINT"] = args.cdp_endpoint
 
 
 def main(argv: list[str] | None = None):
