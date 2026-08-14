@@ -1,14 +1,19 @@
 <!-- mcp-name: io.github.Retio-ai/pagemap -->
 
-# PageMap CloakBrowser Fork
+# PageMap
 
-This is a personal fork of Retio PageMap with first-class [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) integration. PageMap still converts raw HTML (100K+ tokens) into structured, AI-readable page maps (2-5K tokens) — a **97% token reduction** — but live browsing now runs through CloakBrowser's patched Chromium instead of stock Playwright Chromium.
+Structured web intelligence for AI agents, built on a configurable two-stage pipeline. Raw HTML (100K+ tokens) becomes structured, AI-readable page maps (2-5K tokens) — a **97% token reduction** — and live browsing runs through a stealth browser stack instead of stock Playwright Chromium.
 
-CloakBrowser adds source-level browser fingerprint patches, proxy-aware locale/timezone options, optional humanized input, extension loading, persistent profiles, and an optional Patchright backend. The PageMap MCP tools and compression pipeline remain the same: agents can read, click, type, and navigate any web page through the usual MCP server, Python SDK, and CLI surfaces.
+Derived from [Retio AI's PageMap](https://github.com/Retio-ai/Retio-pagemap) (AGPL-3.0), this project grew well beyond its fork roots:
+
+- **Configurable retrieval** — [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) (patched Chromium with source-level fingerprint patches, proxy-aware locale/timezone, optional humanized input, extension loading, persistent profiles, optional Patchright backend) *or* **stealth HTTP** (`curl_cffi` TLS impersonation — no browser, no JS, cheap and fast)
+- **Pluggable extraction** — `retio` (the original full PageMap core) *or* `pulpie` (third-party encoder markdown), plus a bare `markdown` mode
+- **18 MCP tools** across two paths — full browser automation (read, click, type, navigate, multi-tab) and read-only web search/fetch with named sessions
+- **A Pi package** (`pagemap-pi`) for token-efficient read-only web access without an MCP server
 
 > *"Give your agent eyes and hands on the web."*
 
-[![CI](https://github.com/Retio-ai/Retio-pagemap/actions/workflows/ci.yml/badge.svg)](https://github.com/Retio-ai/Retio-pagemap/actions/workflows/ci.yml)
+[![CI](https://github.com/MasterLegoYoda/Retio-pagemap-cloaked/actions/workflows/ci.yml/badge.svg)](https://github.com/MasterLegoYoda/Retio-pagemap-cloaked/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/retio-pagemap)](https://pypi.org/project/retio-pagemap/)
 [![Python](https://img.shields.io/pypi/pyversions/retio-pagemap)](https://pypi.org/project/retio-pagemap/)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
@@ -36,13 +41,13 @@ PageMap gives your agent a **compressed, actionable** view of any web page:
 | **Avg tokens / task** | **2,710** | 13,737 | 13,888 | 11,424 |
 | **Cost / 94 tasks** | **$1.06** | $4.09 | $3.98 | $2.26 |
 
-> Benchmarked across 11 e-commerce sites, 94 static tasks, 7 conditions. 8,100+ tests passing.
+> Benchmarked across 11 e-commerce sites, 94 static tasks, 7 conditions. 4,700+ tests passing.
 
 ---
 
 ## Quick Start
 
-This fork uses [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) for live browsing. It downloads its patched Chromium binary on first use, or you can preinstall it with `cloakbrowser install`.
+PageMap uses [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) for live browsing by default. It downloads its patched Chromium binary on first use, or you can preinstall it with `cloakbrowser install`.
 
 ### Install
 
@@ -79,11 +84,17 @@ docker run -p 8000:8000 retio1001/pagemap --transport http
 
 ## Features
 
-### 13 MCP Tools — Read + Interact
+### 18 MCP Tools — Read + Interact
 
-Not just reading — your agent can click buttons, fill forms, select options, manage tabs, and navigate across pages. 13 tools cover the full browsing workflow:
+18 tools cover the full browsing workflow across two complementary paths:
 
-`get_page_map` · `execute_action` · `fill_form` · `scroll_page` · `wait_for` · `take_screenshot` · `get_page_state` · `navigate_back` · `batch_get_page_map` · `open_tab` · `switch_tab` · `list_tabs` · `close_tab`
+- **Browser automation** — click buttons, fill forms, select options, manage tabs, navigate across pages:
+
+  `get_page_map` · `execute_action` · `fill_form` · `scroll_page` · `wait_for` · `take_screenshot` · `get_page_state` · `navigate_back` · `batch_get_page_map` · `open_tab` · `switch_tab` · `list_tabs` · `close_tab`
+
+- **Web fetch (read-only)** — search and fetch content as clean markdown, no refs or interaction needed:
+
+  `web_search` · `web_fetch` · `batch_web_fetch` · `web_list_sessions` · `web_close_session`
 
 ### 16 Page Types, Auto-Detected
 
@@ -119,6 +130,46 @@ PageMap detects problems and tells your agent what to do:
 - **2-layer caching** — Cache hit (~10ms), content refresh (~500ms), full rebuild (~1.5s). Diff-based updates for unchanged sections
 - **Delta evidence packet output** - Optional `to_delta_packet()` serializer emits digest-bound evidence units, claim candidates, provenance, and authority flags for downstream memory/review systems without changing the default MCP output
 
+### Configurable Pipeline
+
+PageMap is a pluggable two-stage pipeline: a **retriever** fetches the page, an **extractor** turns the raw HTML into clean, LLM-readable data. Pick the pair at startup with `--retriever` / `--extractor`, or the `PAGEMAP_RETRIEVER` / `PAGEMAP_EXTRACTOR` env vars (resolution is CLI > env > default):
+
+| Knob | Choices | Default |
+|---|---|---|
+| `--retriever` | `cloak` (CloakBrowser), `fetch` (stealth HTTP), `auto` | `cloak` |
+| `--extractor` | `retio` (full PageMap), `pulpie` (encoder markdown, opt-in), `markdown` (BeautifulSoup), `auto` | `retio` |
+
+**Retrievers** — how the page is obtained:
+
+| Retriever | Description |
+|---|---|
+| `cloak` | CloakBrowser patched Chromium: full JavaScript, anti-detection fingerprints, session continuity. Default. |
+| `fetch` | **Stealth HTTP** — `curl_cffi` TLS impersonation (falls back to `httpx` / `urllib`). No browser, no JS: cheap and fast, ideal for static docs, articles, and APIs. |
+| `auto` | First available: `cloak` → `fetch`. |
+
+**Extractors** — how the raw HTML becomes LLM-readable data:
+
+| Extractor | MARKDOWN | INTERACTABLES | FORMS | PAGE_TYPE | SCHEMA |
+|---|:-:|:-:|:-:|:-:|:-:|
+| `retio`     | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `pulpie`    | ✓ |   |   |   |   |
+| `markdown`  | ✓ |   |   |   |   |
+
+`retio` is the original PageMap core — everything `get_page_map` needs. `pulpie` is a third-party encoder-based markdown extractor (`pip install 'retio-pagemap[pulpie]'`). `markdown` is a thin BeautifulSoup markdown adapter. `auto` picks the most capable available extractor (`retio` → `pulpie` → `markdown`).
+
+**Capability rules:** `get_page_map` requires INTERACTABLES — with `--extractor pulpie` it returns a clear `MissingCapability` error pointing you at `--extractor retio`. `web_fetch` works with any extractor (it only needs MARKDOWN).
+
+Related knobs: `--fast-backend` / `PAGEMAP_FAST_BACKEND` picks the HTTP backend used by `fetch` (`auto` = `curl_cffi` → `httpx` → `urllib`); `PAGEMAP_SEARCH_PROVIDER` sets the default search provider (`duckduckgo`, `brave`, `bing`, `google`, `searxng`, `exa`, `tavily`, `firecrawl`).
+
+```bash
+# Cheaper / markdown-only mode (no browser, no JS):
+retio-pagemap --retriever fetch --extractor markdown
+
+# Encoder-based extraction (needs the pulpie optional dep):
+pip install 'retio-pagemap[pulpie]'
+retio-pagemap --extractor pulpie
+```
+
 ### 10 Languages
 
 Locale auto-detected from URL. Token budgets adjusted for CJK scripts.
@@ -153,18 +204,22 @@ Multi-architecture images (amd64/arm64) available on [Docker Hub](https://hub.do
 
 ### Pi (no MCP)
 
-A token-efficient [Pi](https://pi.dev) extension lives at
-`.pi/extensions/pagemap/`. It registers four read-only tools
-(`pagemap_search`, `pagemap_fetch`, `pagemap_batch_fetch`,
-`pagemap_sessions`) that shell out to the `pagemap` CLI. No MCP
-server, no 18-tool context blast.
+A token-efficient [Pi](https://pi.dev) package lives at
+[`pagemap-pi/`](pagemap-pi/README.md). It ships an extension that
+registers four read-only tools (`pagemap_search`, `pagemap_fetch`,
+`pagemap_batch_fetch`, `pagemap_sessions`) that shell out to the
+`pagemap` CLI, plus the `pagemap-web-fetch` and `pagemap-browse-page`
+skills. No MCP server, no 18-tool context blast.
 
 ```bash
-make pi-install                  # npm install + symlink to ~/.pi/agent/extensions/pagemap
-make pi-uninstall                # remove the symlink
+make pi-install                  # npm install + global pi install
+make pi-install-local            # project-local install (.pi/settings.json)
+make pi-update                   # re-install after code changes
+make pi-uninstall                # remove the package
+make pi-clean                    # remove node_modules/
 # or, without make:
-bash scripts/install-pi-extension.sh
-bash scripts/uninstall-pi-extension.sh
+bash scripts/install-pi-package.sh
+bash scripts/uninstall-pi-package.sh
 ```
 
 After `pi-install`, restart Pi (or run `/reload` in the TUI). The
@@ -174,7 +229,7 @@ The interactive tools (`get_page_map` / `execute_action` / `fill_form` /
 screenshots / multi-tab) are MCP-only and are not exposed by the
 extension. Use the MCP server for those flows.
 
-See `.pi/extensions/pagemap/README.md` and `skills/web-fetch/SKILL.md`
+See [`pagemap-pi/README.md`](pagemap-pi/README.md) and `skills/web-fetch/SKILL.md`
 for full details.
 
 ---
@@ -239,11 +294,14 @@ Users are responsible for complying with the terms of service of target websites
 
 **CloakBrowser binary not found** — Run `pip install retio-pagemap && cloakbrowser install` to install manually.
 
-**CloakBrowser options** — This fork runs live browsing through CloakBrowser. Useful knobs:
+**CloakBrowser options** — Live browsing runs through CloakBrowser by default. Useful knobs:
 `PAGEMAP_CLOAK_PROXY`, `PAGEMAP_CLOAK_GEOIP=1`, `PAGEMAP_CLOAK_TIMEZONE`,
 `PAGEMAP_CLOAK_LOCALE`, `PAGEMAP_CLOAK_BACKEND=patchright`,
 `PAGEMAP_CLOAK_HUMANIZE=1`, `PAGEMAP_CLOAK_EXTENSION_PATHS`, and
 `PAGEMAP_CLOAK_PERSISTENT=1`.
+
+**Pipeline retriever / extractor** — See [Configurable Pipeline](#configurable-pipeline)
+above for the full retriever/extractor matrix, capability rules, and examples.
 
 ---
 
@@ -254,15 +312,15 @@ Users are responsible for complying with the terms of service of target websites
 
 ## Community
 
-Have a question or idea? Join the conversation in [GitHub Discussions](https://github.com/Retio-ai/Retio-pagemap/discussions).
+Have a question or idea? Join the conversation in [GitHub Discussions](https://github.com/MasterLegoYoda/Retio-pagemap-cloaked/discussions).
 
 ## Development
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/Retio-ai/Retio-pagemap?quickstart=1)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/MasterLegoYoda/Retio-pagemap-cloaked?quickstart=1)
 
 ```bash
-git clone https://github.com/Retio-ai/Retio-pagemap.git
-cd Retio-pagemap
+git clone https://github.com/MasterLegoYoda/Retio-pagemap-cloaked.git
+cd Retio-pagemap-cloaked
 uv sync --group dev
 cloakbrowser install
 uv run pytest --tb=short -q
@@ -292,9 +350,16 @@ For commercial licensing options, contact **retio1001@retio.ai**.
 
 ### Tools
 
+Two complementary paths — use the **web-fetch tools for read-only lookups** (docs, articles, any "just give me the content" task), and the **browser-automation tools to interact with a page** (click, type, form-fill, multi-tab flows).
+
 | Tool | When to use |
 |------|-------------|
-| `get_page_map` | **Start here.** Navigate to a URL and get a full structured map with numbered refs. |
+| `web_search` | **Read-only lookups start here.** Search the web, pick a URL, then `web_fetch`. |
+| `web_fetch` | Fetch a URL as markdown/text/html/JSON. `mode="fast"` uses stealth HTTP (no browser). |
+| `batch_web_fetch` | Fetch up to 10 URLs in parallel. Use for comparison tasks. |
+| `web_list_sessions` | List active web sessions (default, named, or generated). |
+| `web_close_session` | Close a web session, or reset the `default` session. |
+| `get_page_map` | **Interaction starts here.** Navigate to a URL and get a full structured map with numbered refs. |
 | `execute_action` | Click, type, select, or hover using a ref number from the last `get_page_map`. |
 | `fill_form` | Fill multiple form fields in one call. More efficient than sequential `execute_action` calls. |
 | `get_page_state` | Check current URL and title without a full rebuild. Use after actions that may navigate. |
@@ -306,7 +371,7 @@ For commercial licensing options, contact **retio1001@retio.ai**.
 | `switch_tab` | Switch to a different open tab by index. |
 | `list_tabs` | List all open tabs with their URLs and titles. |
 | `close_tab` | Close a tab by index. |
-| `batch_get_page_map` | Fetch multiple URLs in parallel. Use for comparison tasks. |
+| `batch_get_page_map` | Fetch structured Page Maps for multiple URLs in parallel. |
 
 ### Output Format
 

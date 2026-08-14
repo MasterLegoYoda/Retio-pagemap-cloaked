@@ -6,7 +6,7 @@ description: "Search the web and fetch pages as compressed markdown via the page
 # Web Fetch (read-only)
 
 Read-only web access via four tools registered by the
-`pagemap-pi-extension` (`.pi/extensions/pagemap/`). No MCP server required.
+`pagemap-pi-extension` (shipped in the `pagemap-pi` package of this repo). No MCP server required.
 
 ```
 pagemap_search(query)        -> [{title, url, snippet}, ...]

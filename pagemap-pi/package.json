@@ -1,0 +1,15 @@
+{
+  "name": "pagemap-pi-package",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PageMap Pi package — read-only web access (search, fetch, batch-fetch, sessions) via CLI tools. Includes extension and skill.",
+  "keywords": ["pi-package", "web", "search", "fetch", "pagemap"],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./extensions/pagemap"],
+    "skills": ["./skills"]
+  }
+}

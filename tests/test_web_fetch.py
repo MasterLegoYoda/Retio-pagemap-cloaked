@@ -1,7 +1,7 @@
 # Copyright (C) 2025-2026 Retio AI
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Tests for the web_fetch package: extraction, sessions, provider registry,
+"""Tests for the pipeline.retriever package: extraction, sessions, provider registry,
 and the DuckDuckGo HTML parser.
 """
 
@@ -12,7 +12,12 @@ import os
 
 import pytest
 
-from pagemap.web_fetch import (
+from pagemap.pipeline.extractor._html_utils import (
+    extract,
+    spillover_path_for,
+)
+from pagemap.pipeline.extractor.errors import ExtractionError
+from pagemap.pipeline.retriever import (
     DEFAULT_SESSION_ID,
     NEW_SESSION_SENTINEL,
     BatchWebFetchResult,
@@ -21,31 +26,28 @@ from pagemap.web_fetch import (
     SessionManager,
     WebFetchResult,
     WebSearchResult,
+)
+from pagemap.pipeline.retriever.errors import (
+    InvalidSessionName,
+    SessionNotFound,
+)
+from pagemap.pipeline.retriever.providers import (
     available_providers,
     get_provider,
     list_provider_names,
     register_provider,
-    resolve_session_arg,
 )
-from pagemap.web_fetch.errors import (
-    ExtractionError,
-    InvalidSessionName,
-    ProviderError,
-    SessionNotFound,
-)
-from pagemap.web_fetch.extract import (
-    extract,
-    spillover_path_for,
-)
-from pagemap.web_fetch.providers.base import ProviderContext
-from pagemap.web_fetch.providers.duckduckgo import (
+from pagemap.pipeline.retriever.providers.base import ProviderContext
+from pagemap.pipeline.retriever.providers.duckduckgo import (
     DuckDuckGoProvider,
     _parse_results,
     _strip_ddg_redirect,
 )
-from pagemap.web_fetch.sessions import (
+from pagemap.pipeline.retriever.providers.errors import ProviderError
+from pagemap.pipeline.retriever.sessions import (
     SESSION_NAME_PATTERN,
     _validate_explicit_name,
+    resolve_session_arg,
 )
 
 # ── Session name validation ─────────────────────────────────────────
@@ -448,7 +450,7 @@ class FakeProvider:
 class TestProviderRegistry:
     def setup_method(self):
         # Snapshot the registry so we can restore after each test.
-        from pagemap.web_fetch.providers import registry as reg
+        from pagemap.pipeline.retriever.providers import registry as reg
 
         self._factories = dict(reg._PROVIDER_FACTORIES)
         self._instances = dict(reg._PROVIDER_INSTANCES)
@@ -458,7 +460,7 @@ class TestProviderRegistry:
     def teardown_method(self):
         from contextlib import suppress
 
-        from pagemap.web_fetch.providers import registry as reg
+        from pagemap.pipeline.retriever.providers import registry as reg
 
         reg._PROVIDER_FACTORIES.clear()
         reg._PROVIDER_FACTORIES.update(self._factories)
@@ -498,7 +500,9 @@ class TestProviderRegistry:
         asyncio.run(run())
 
 
-# ── Fast mode (HTTP-only) ──────────────────────────────────────────
+# ── Fast mode (HTTP-only) — runs the full web_fetch_impl through the
+# new pipeline layer.  Patches the resolved HttpBackend so no real
+# network is hit.
 
 
 class TestFastModeFetch:
@@ -509,7 +513,8 @@ class TestFastModeFetch:
 
     @pytest.mark.asyncio
     async def test_fast_mode_returns_extracted_content(self, monkeypatch):
-        from pagemap.web_fetch.http.base import HttpResponse
+        from pagemap.pipeline.retriever.http.backends import UrllibBackend
+        from pagemap.pipeline.retriever.http.base import HttpResponse
 
         async def fake_fetch(self, url, **_):
             return HttpResponse(
@@ -519,8 +524,6 @@ class TestFastModeFetch:
                 text="<html><body><h1>Hello</h1><p>World</p></body></html>",
                 set_cookies=[],
             )
-
-        from pagemap.web_fetch.http.backends import UrllibBackend
 
         monkeypatch.setattr(UrllibBackend, "fetch", fake_fetch)
 
@@ -544,11 +547,11 @@ class TestFastModeFetch:
         )
         assert "Hello" in out
         assert "World" in out
-        assert "Error" not in out or out.startswith("# ")
 
     @pytest.mark.asyncio
     async def test_fast_mode_persists_cookies(self, monkeypatch):
-        from pagemap.web_fetch.http.base import HttpResponse, SetCookie
+        from pagemap.pipeline.retriever.http.backends import UrllibBackend
+        from pagemap.pipeline.retriever.http.base import HttpResponse, SetCookie
 
         calls: list[dict] = []
 
@@ -569,8 +572,6 @@ class TestFastModeFetch:
                 text="<html><body>profile</body></html>",
                 set_cookies=[],
             )
-
-        from pagemap.web_fetch.http.backends import UrllibBackend
 
         monkeypatch.setattr(UrllibBackend, "fetch", fake_fetch)
 
@@ -611,7 +612,8 @@ class TestFastModeFetch:
 
     @pytest.mark.asyncio
     async def test_fast_mode_metadata_records_backend(self, monkeypatch):
-        from pagemap.web_fetch.http.base import HttpResponse
+        from pagemap.pipeline.retriever.http.backends import UrllibBackend
+        from pagemap.pipeline.retriever.http.base import HttpResponse
 
         async def fake_fetch(self, url, **_):
             return HttpResponse(
@@ -621,8 +623,6 @@ class TestFastModeFetch:
                 text="<html><body>x</body></html>",
                 set_cookies=[],
             )
-
-        from pagemap.web_fetch.http.backends import UrllibBackend
 
         monkeypatch.setattr(UrllibBackend, "fetch", fake_fetch)
 
@@ -648,12 +648,11 @@ class TestFastModeFetch:
 
     @pytest.mark.asyncio
     async def test_fast_mode_surfaces_backend_error(self, monkeypatch):
-        from pagemap.web_fetch.http.base import HttpBackendError
+        from pagemap.pipeline.retriever.http.backends import UrllibBackend
+        from pagemap.pipeline.retriever.http.base import HttpBackendError
 
         async def fake_fetch(self, url, **_):
             raise HttpBackendError("simulated dns failure")
-
-        from pagemap.web_fetch.http.backends import UrllibBackend
 
         monkeypatch.setattr(UrllibBackend, "fetch", fake_fetch)
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pagemap.web_fetch import WebSession
+from pagemap.pipeline.retriever import WebSession
 
 __all__ = [
     "acquire_browser_page",

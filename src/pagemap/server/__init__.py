@@ -119,28 +119,35 @@ try:
     from pagemap.resilience.singleflight import SingleFlight
 except ImportError:
     SingleFlight = None  # type: ignore[assignment,misc]
-from pagemap.template_cache import InMemoryTemplateCache, TemplateKey, extract_template_domain
-
 # Web fetch / search layer (read-only path; see SKILLs/browse-page and
 # skills/web-fetch for the agent-facing documentation).
-from pagemap.web_fetch import (
+from pagemap.pipeline.config import (
+    PipelineConfig as _PipelineConfig,
+    resolve_config as _resolve_pipeline_config,
+)
+from pagemap.pipeline.core import Pipeline as _Pipeline
+from pagemap.pipeline.extractor._html_utils import (
+    extract as _extract_content,
+)
+from pagemap.pipeline.registry import resolve_pipeline as _resolve_pipeline
+from pagemap.pipeline.retriever import (
     DEFAULT_SESSION_ID as _DEFAULT_SESSION_ID,
     BatchWebFetchResult as _WebBatchResult,
     FetchFormat as _FetchFormat,
     FetchMode as _FetchMode,
     HttpSessionState as _HttpSessionState,
     InvalidSessionName as _InvalidSessionName,
-    ProviderError as _ProviderError,
     SessionManager as _SessionManager,
     SessionNotFound as _SessionNotFound,
     WebFetchResult as _WebFetchResult,
     WebSearchResult as _WebSearchEntry,
-    get_provider as _get_search_provider,
-    http as _http_backends,
     resolve_session_arg as _resolve_session_arg,
 )
-from pagemap.web_fetch.extract import extract as _extract_content
-from pagemap.web_fetch.http.base import HttpBackendError as _HttpBackendError
+from pagemap.pipeline.retriever.http.base import HttpBackendError as _HttpBackendError
+from pagemap.pipeline.retriever.http.registry import resolve_backend as _resolve_http_backend
+from pagemap.pipeline.retriever.providers import get_provider as _get_search_provider
+from pagemap.pipeline.retriever.providers.errors import ProviderError as _ProviderError
+from pagemap.template_cache import InMemoryTemplateCache, TemplateKey, extract_template_domain
 
 from .action_helpers import (
     _BROWSER_DEAD_PATTERNS as _BROWSER_DEAD_PATTERNS,
@@ -3518,7 +3525,7 @@ async def _batch_get_page_map_impl(urls: list[str], max_concurrency: int, *, ctx
 # first-class: every tool accepts a ``session`` argument that resolves to
 # either the long-lived default session, a freshly created session
 # (``"new"`` / ``"new:<name>"``), or a previously created session id.
-# Backends are pluggable (see ``pagemap.web_fetch.providers``).
+# Backends are pluggable (see ``pagemap.pipeline.retriever.providers``).
 
 # Global, in-process session manager. Lives for the lifetime of the server.
 _web_session_manager = _SessionManager(
@@ -3558,9 +3565,77 @@ def _get_http_backend() -> object:
     global _http_backend, _http_backend_name
     if _http_backend is None:
         prefer = _get_fast_backend_prefer()
-        _http_backend = _http_backends.resolve_backend(prefer)
+        _http_backend = _resolve_http_backend(prefer)
         _http_backend_name = getattr(_http_backend, "name", "unknown")
     return _http_backend
+
+
+#: Module-level singleton for the configured :class:`Pipeline`.  Built
+#: at server startup from ``--retriever`` / ``--extractor`` (or the
+#: corresponding env vars).  Tools read it via :func:`_get_pipeline`.
+#: ``None`` means "not yet initialized" — :func:`_get_pipeline` falls
+#: back to the default ``cloak+retio`` pipeline in that case so
+#: tooling that imports this module outside of ``main()`` still works.
+_pipeline: _Pipeline | None = None
+#: Module-level snapshot of the resolved :class:`PipelineConfig`.
+#: Set in :func:`_init_pipeline` and re-read by
+#: :func:`_get_pipeline_config`.
+_pipeline_config: _PipelineConfig | None = None
+
+
+def _get_pipeline_config() -> _PipelineConfig:
+    """Return the resolved :class:`PipelineConfig`.
+
+    Falls back to a default ``cloak + retio`` config when the
+    module is imported outside of :func:`main` (e.g. by tests).
+    """
+    global _pipeline_config
+    if _pipeline_config is None:
+        _pipeline_config = _resolve_pipeline_config()
+    return _pipeline_config
+
+
+def _get_pipeline() -> _Pipeline:
+    """Return the configured :class:`Pipeline`.
+
+    Lazy-initializes on first call so module import doesn't pull
+    in the full pipeline stack.  Tests can call
+    :func:`_init_pipeline` directly with explicit overrides.
+    """
+    global _pipeline
+    if _pipeline is None:
+        _init_pipeline()
+    assert _pipeline is not None  # noqa: S101 — invariant
+    return _pipeline
+
+
+def _init_pipeline(
+    *,
+    cli_retriever: str | None = None,
+    cli_extractor: str | None = None,
+) -> _Pipeline:
+    """Resolve the pipeline config and build the :class:`Pipeline`.
+
+    Called from :func:`main` at startup.  Also exposed for tests
+    that want to swap the configured pipeline in-process.
+    """
+    global _pipeline, _pipeline_config
+    _pipeline_config = _resolve_pipeline_config(
+        cli_retriever=cli_retriever,
+        cli_extractor=cli_extractor,
+    )
+    pipeline_name = f"{_pipeline_config.retriever_name}-{_pipeline_config.extractor_name}"
+    _pipeline = _resolve_pipeline(pipeline_name)
+    return _pipeline
+
+
+def _reset_pipeline_for_tests() -> None:
+    """Test hook: drop the cached pipeline + config so the next
+    ``_get_pipeline()`` call rebuilds them.
+    """
+    global _pipeline, _pipeline_config
+    _pipeline = None
+    _pipeline_config = None
 
 
 def _get_fast_backend_prefer() -> str | None:
@@ -3804,7 +3879,7 @@ async def _web_search_impl(
     except _ProviderError as exc:
         return f"Error: {exc}"
 
-    from pagemap.web_fetch.providers.base import ProviderContext
+    from pagemap.pipeline.retriever.providers.base import ProviderContext
 
     history = sess.history + [{"page": sess.browser.page if sess.browser else None}]
     ctx = ProviderContext(
@@ -3843,7 +3918,7 @@ async def _web_search_impl(
 
     # Build the actual WebSearchOutput (we use the inner result model for
     # return string serialization).
-    from pagemap.web_fetch.models import WebSearchOutput
+    from pagemap.pipeline.retriever.models import WebSearchOutput
 
     output = WebSearchOutput(
         query=query,
@@ -3888,7 +3963,7 @@ async def web_fetch(
     Args:
         url: URL to fetch (http/https only).
         mode: ``browser`` (default, CloakBrowser-rendered) or ``fast``
-            (HTTP-only via :mod:`pagemap.web_fetch.http`).  Fast mode
+            (HTTP-only via :mod:`pagemap.pipeline.retriever.http`).  Fast mode
             uses an :class:`HttpBackend` (``curl_cffi`` by default,
             falling back to ``httpx`` / ``urllib``) and never spins
             up a browser — useful for read-only lookups when CloakBrowser
@@ -4041,7 +4116,7 @@ async def _web_fetch_impl(
         )
 
     try:
-        from pagemap.web_fetch_bridge import acquire_browser_page
+        from pagemap.pipeline.retriever.bridge import acquire_browser_page
 
         page = acquire_browser_page(sess) or page
         response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -4548,6 +4623,27 @@ def _parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
             "HTTP backend used by web_fetch mode='fast'. "
             "'auto' picks curl_cffi > httpx > urllib based on availability. "
             "Set PAGEMAP_FAST_BACKEND to override without CLI."
+        ),
+    )
+    parser.add_argument(
+        "--retriever",
+        choices=("cloak", "fetch", "auto"),
+        default=None,
+        help=(
+            "Pipeline retriever: 'cloak' (CloakBrowser, default), 'fetch' "
+            "(HTTP only), or 'auto' (pick the first available). "
+            "Set PAGEMAP_RETRIEVER to override without CLI."
+        ),
+    )
+    parser.add_argument(
+        "--extractor",
+        choices=("retio", "pulpie", "markdown", "auto"),
+        default=None,
+        help=(
+            "Pipeline extractor: 'retio' (full PageMap, default), "
+            "'pulpie' (encoder markdown, requires `pip install "
+            "retio-pagemap[pulpie]`), or 'markdown' (BeautifulSoup "
+            "markdown). Set PAGEMAP_EXTRACTOR to override without CLI."
         ),
     )
     parser.add_argument(

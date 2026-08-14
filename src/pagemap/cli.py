@@ -489,7 +489,7 @@ def _print_web_error(prefix: str, exc: Exception) -> None:
 
 def cmd_search(args: argparse.Namespace) -> None:
     """``pagemap search`` — run a web search and print the results."""
-    from pagemap.web_fetch.errors import ProviderError
+    from pagemap.pipeline.retriever.providers.errors import ProviderError
 
     try:
         asyncio.run(_cmd_search_async(args))
@@ -510,10 +510,10 @@ def cmd_search(args: argparse.Namespace) -> None:
 
 
 async def _cmd_search_async(args: argparse.Namespace) -> None:
-    from pagemap.web_fetch import WebSearchResult
-    from pagemap.web_fetch.providers import get_provider
-    from pagemap.web_fetch.providers.base import ProviderContext
-    from pagemap.web_fetch.sessions import resolve_session_arg
+    from pagemap.pipeline.retriever import WebSearchResult
+    from pagemap.pipeline.retriever.providers import get_provider
+    from pagemap.pipeline.retriever.providers.base import ProviderContext
+    from pagemap.pipeline.retriever.sessions import resolve_session_arg
 
     from .server.browser_session import BrowserSession
     from .server.web_fetch_bridge import attach_browser_to_session
@@ -527,7 +527,7 @@ async def _cmd_search_async(args: argparse.Namespace) -> None:
     # search providers can work over stdlib HTTP without Chromium.
     need_browser = bool(args.use_browser)
 
-    manager_mod = __import__("pagemap.web_fetch", fromlist=["SessionManager"])
+    manager_mod = __import__("pagemap.pipeline.retriever", fromlist=["SessionManager"])
     manager = manager_mod.SessionManager()
 
     sess, _created = resolve_session_arg(session_arg, manager=manager)
@@ -621,10 +621,10 @@ def cmd_fetch(args: argparse.Namespace) -> None:
 
 
 async def _cmd_fetch_async(args: argparse.Namespace) -> None:
-    from pagemap.web_fetch import FetchFormat
-    from pagemap.web_fetch.extract import extract as _extract
-    from pagemap.web_fetch.models import WebFetchResult
-    from pagemap.web_fetch.sessions import resolve_session_arg
+    from pagemap.pipeline.extractor._html_utils import extract as _extract
+    from pagemap.pipeline.retriever import FetchFormat
+    from pagemap.pipeline.retriever.models import WebFetchResult
+    from pagemap.pipeline.retriever.sessions import resolve_session_arg
 
     from .server.browser_session import BrowserSession
     from .server.url_validation import _validate_url
@@ -647,7 +647,7 @@ async def _cmd_fetch_async(args: argparse.Namespace) -> None:
         print(f"Error: {err}", file=sys.stderr)
         sys.exit(1)
 
-    manager_mod = __import__("pagemap.web_fetch", fromlist=["SessionManager"])
+    manager_mod = __import__("pagemap.pipeline.retriever", fromlist=["SessionManager"])
     manager = manager_mod.SessionManager()
     sess, _created = resolve_session_arg(getattr(args, "session", None), manager=manager)
 
@@ -738,9 +738,9 @@ def cmd_batch_fetch(args: argparse.Namespace) -> None:
 
 
 async def _cmd_batch_fetch_async(args: argparse.Namespace) -> None:
-    from pagemap.web_fetch import FetchFormat
-    from pagemap.web_fetch.extract import extract as _extract
-    from pagemap.web_fetch.sessions import resolve_session_arg
+    from pagemap.pipeline.extractor._html_utils import extract as _extract
+    from pagemap.pipeline.retriever import FetchFormat
+    from pagemap.pipeline.retriever.sessions import resolve_session_arg
 
     from .server.browser_session import BrowserSession
     from .server.url_validation import _validate_url
@@ -752,7 +752,7 @@ async def _cmd_batch_fetch_async(args: argparse.Namespace) -> None:
         print("Error: mode='fast' is not yet implemented.", file=sys.stderr)
         sys.exit(1)
 
-    manager_mod = __import__("pagemap.web_fetch", fromlist=["SessionManager"])
+    manager_mod = __import__("pagemap.pipeline.retriever", fromlist=["SessionManager"])
     manager = manager_mod.SessionManager()
     sess, _created = resolve_session_arg(getattr(args, "session", None), manager=manager)
 
@@ -843,7 +843,7 @@ async def _cmd_batch_fetch_async(args: argparse.Namespace) -> None:
 
 def cmd_sessions(args: argparse.Namespace) -> None:
     """``pagemap sessions list`` / ``pagemap sessions close`` — manage web sessions."""
-    from pagemap.web_fetch import SessionManager
+    from pagemap.pipeline.retriever import SessionManager
 
     if args.sessions_command == "list":
         manager = SessionManager()

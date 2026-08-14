@@ -9,13 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pagemap.browser_session import (
+    _DOM_SETTLE_JS,
     BLOCKED_URL_SCHEMES,
     DEFAULT_LOCALE,
     DEFAULT_USER_AGENT,
     DEFAULT_VIEWPORT,
     BrowserConfig,
     BrowserSession,
-    _DOM_SETTLE_JS,
     _auto_install_chromium,
     _cdp_ax_nodes_to_tree,
 )

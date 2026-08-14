@@ -25,33 +25,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pagemap.web_fetch.http.backends import (
+from pagemap.pipeline.retriever.http.backends import (
     CurlCffiBackend,
     HttpxBackend,
     UrllibBackend,
 )
-from pagemap.web_fetch.http.backends.curl_cffi import (
+from pagemap.pipeline.retriever.http.backends.curl_cffi import (
     _parse_set_cookie as _parse_set_cookie_curl,
 )
-from pagemap.web_fetch.http.backends.httpx_backend import (
+from pagemap.pipeline.retriever.http.backends.httpx_backend import (
     _parse_set_cookie as _parse_set_cookie_httpx,
 )
-from pagemap.web_fetch.http.backends.urllib_backend import (
+from pagemap.pipeline.retriever.http.backends.urllib_backend import (
     _parse_set_cookie as _parse_set_cookie_urllib,
 )
-from pagemap.web_fetch.http.base import (
+from pagemap.pipeline.retriever.http.base import (
     HttpBackendError,
     HttpResponse,
     SetCookie,
 )
-from pagemap.web_fetch.http.registry import (
+from pagemap.pipeline.retriever.http.registry import (
     _reset_for_tests,
     get_backend,
     list_backends,
     register_backend,
     resolve_backend,
 )
-from pagemap.web_fetch.sessions import HttpSessionState, WebSession
+from pagemap.pipeline.retriever.sessions import HttpSessionState, WebSession
 
 # All three Set-Cookie parsers should be byte-for-byte equivalent —
 # run the same test matrix against each.
@@ -68,19 +68,19 @@ ALL_COOKIE_PARSERS = [
 class TestRegistry:
     def setup_method(self):
         # Snapshot and clear so tests can't poison each other.
-        from pagemap.web_fetch.http import registry as reg
+        from pagemap.pipeline.retriever.http import registry as reg
 
         self._factories = dict(reg._FACTORIES)
         self._instances = dict(reg._INSTANCES)
         _reset_for_tests()
         # Re-register the built-ins (the import side-effect only
         # fires once on first import of the http package).
-        from pagemap.web_fetch.http import _builtins as _b
+        from pagemap.pipeline.retriever.http import _builtins as _b
 
         _b._register_builtins()
 
     def teardown_method(self):
-        from pagemap.web_fetch.http import registry as reg
+        from pagemap.pipeline.retriever.http import registry as reg
 
         reg._FACTORIES.clear()
         reg._FACTORIES.update(self._factories)
@@ -95,8 +95,8 @@ class TestRegistry:
 
     def test_resolve_auto_picks_httpx_when_curl_cffi_missing(self, monkeypatch):
         # Force curl_cffi to look unavailable without touching global state.
-        from pagemap.web_fetch.http import registry as reg
-        from pagemap.web_fetch.http.backends import curl_cffi as curl_mod
+        from pagemap.pipeline.retriever.http import registry as reg
+        from pagemap.pipeline.retriever.http.backends import curl_cffi as curl_mod
 
         monkeypatch.setattr(curl_mod.CurlCffiBackend, "is_available", lambda self: False)
         # Drop any cached instance of curl_cffi so the next resolve
@@ -110,8 +110,8 @@ class TestRegistry:
         assert backend.name == "httpx"
 
     def test_resolve_auto_falls_through_to_urllib(self, monkeypatch):
-        from pagemap.web_fetch.http import registry as reg
-        from pagemap.web_fetch.http.backends import curl_cffi as curl_mod, httpx_backend as hx_mod
+        from pagemap.pipeline.retriever.http import registry as reg
+        from pagemap.pipeline.retriever.http.backends import curl_cffi as curl_mod, httpx_backend as hx_mod
 
         monkeypatch.setattr(curl_mod.CurlCffiBackend, "is_available", lambda self: False)
         monkeypatch.setattr(hx_mod.HttpxBackend, "is_available", lambda self: False)
@@ -130,8 +130,8 @@ class TestRegistry:
             resolve_backend("definitely-not-a-real-backend")
 
     def test_resolve_uninstalled_raises_with_helpful_message(self):
-        from pagemap.web_fetch.http import registry as reg
-        from pagemap.web_fetch.http.backends import curl_cffi as curl_mod
+        from pagemap.pipeline.retriever.http import registry as reg
+        from pagemap.pipeline.retriever.http.backends import curl_cffi as curl_mod
 
         reg._INSTANCES.pop("curl_cffi", None)
         with (

@@ -8,10 +8,10 @@ description: "Browse, read, and interact with web pages using PageMap. Covers fu
 > **Pi (no MCP) users:** this skill documents the **MCP server path**,
 > which is the only way to drive clicks, forms, screenshots, and
 > multi-tab flows. If you only need read-only access, the
-> `pagemap-pi-extension` (`.pi/extensions/pagemap/`) registers the
-> same web-fetch path as four custom tools — `pagemap_search`,
+> `pagemap-pi` package (in this repo) ships an extension that registers
+> the same web-fetch path as four custom tools — `pagemap_search`,
 > `pagemap_fetch`, `pagemap_batch_fetch`, `pagemap_sessions` — with
-> no MCP server required. See `../../.pi/extensions/pagemap/README.md`
+> no MCP server required. See `pagemap-pi/README.md`
 > and the `web-fetch` skill for details.
 
 PageMap exposes **18 tools** through the MCP server. They split into two
